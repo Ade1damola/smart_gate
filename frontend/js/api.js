@@ -48,15 +48,6 @@ function logout() {
   window.location.href = "login.html";
 }
 
-async function showAdminTabIfAdmin() {
-  const adminTab = document.getElementById("admin-nav-tab");
-  if (!adminTab) return;
-  const { ok, data } = await apiFetch("/api/dashboard");
-  if (ok && data.success && data.is_admin) {
-    adminTab.hidden = false;
-  }
-}
-
 function formatDateTime(isoString) {
   if (!isoString) return "--";
   const date = new Date(isoString);

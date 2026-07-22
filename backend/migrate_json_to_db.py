@@ -11,7 +11,7 @@ Usage:
 import json
 import os
 
-from app import app
+from app import app, ensure_default_admin
 from models import db, Staff, Vehicle, Log
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -41,7 +41,6 @@ def migrate_staff():
         staff.fingerprint_template_id = record.get("fingerprint_template_id", "")
         staff.plate_number = record.get("plate_number", "")
         staff.phone_number = record.get("phone_number", "")
-        staff.is_admin = bool(record.get("is_admin", False))
         migrated += 1
     db.session.commit()
     print(f"  Staff: {migrated} record(s) upserted")
@@ -87,4 +86,6 @@ if __name__ == "__main__":
         migrate_staff()
         migrate_vehicles()
         migrate_logs()
+        ensure_default_admin()
+        print("  Admin: GateAdmin account ensured")
         print("Done.")

@@ -19,7 +19,6 @@ class Staff(db.Model):
     fingerprint_template_id = db.Column(db.String(32), nullable=True, default="")
     plate_number = db.Column(db.String(32), nullable=True, default="")
     phone_number = db.Column(db.String(32), nullable=False, default="")
-    is_admin = db.Column(db.Boolean, nullable=False, default=False)
 
     def to_dict(self):
         return {
@@ -29,7 +28,27 @@ class Staff(db.Model):
             "fingerprint_template_id": self.fingerprint_template_id or "",
             "plate_number": self.plate_number or "",
             "phone_number": self.phone_number or "",
-            "is_admin": bool(self.is_admin),
+        }
+
+
+class Admin(db.Model):
+    """A management account, entirely separate from gate-access staff.
+
+    Admins can add new staff members, but have no fingerprint/plate/gate-OTP
+    concept of their own - they're not staff.
+    """
+
+    __tablename__ = "admins"
+
+    admin_id = db.Column(db.String(32), primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+
+    def to_dict(self):
+        return {
+            "admin_id": self.admin_id,
+            "name": self.name,
+            "password_hash": self.password_hash,
         }
 
 

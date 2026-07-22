@@ -16,7 +16,7 @@ import requests
 from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from models import db, Staff, Vehicle, Otp, PasswordResetOtp, Log
+from models import db, Staff, Admin, Vehicle, Otp, PasswordResetOtp, Log
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -45,6 +45,11 @@ TERMII_SENDER_ID = os.environ.get("TERMII_SENDER_ID", "")
 # expected to use the "forgot password" OTP flow to set their own password.
 DEFAULT_STAFF_PASSWORD = "Welcome123!"
 
+# Default password for the seeded admin account. Admins have no phone number
+# and no forgot-password flow of their own, so this only changes if someone
+# updates it directly in the database.
+DEFAULT_ADMIN_PASSWORD = "Verigate752$"
+
 # How long a password-reset OTP stays valid.
 RESET_OTP_VALID_MINUTES = 10
 
@@ -53,8 +58,9 @@ app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db.init_app(app)
 
-# In-memory session store: token -> staff_id. Fine for a small staff app;
-# a Render restart just means everyone logs in again.
+# In-memory session store: token -> {"role": "staff"/"admin", "id": ...}.
+# Fine for a small staff app; a Render restart just means everyone logs in
+# again.
 sessions = {}
 
 
@@ -62,8 +68,27 @@ sessions = {}
 # Seed data (first run only)
 # ---------------------------------------------------------------------------
 
+def ensure_default_admin():
+    """Create the GateAdmin account if it doesn't exist yet.
+
+    Runs on every startup (not just on a fresh DB) so it also gets created
+    for a database that already had staff/vehicle data before the admin
+    account existed as a separate entity.
+    """
+    if db.session.get(Admin, "GateAdmin") is not None:
+        return
+    db.session.add(Admin(
+        admin_id="GateAdmin",
+        name="Gate Admin",
+        password_hash=generate_password_hash(DEFAULT_ADMIN_PASSWORD),
+    ))
+    db.session.commit()
+
+
 def seed_data():
-    """Populate sample staff/vehicles/logs the first time the DB is empty."""
+    """Populate sample staff/admin/vehicles/logs the first time the DB is empty."""
+    ensure_default_admin()
+
     if Staff.query.first() is not None:
         return
 
@@ -75,7 +100,6 @@ def seed_data():
             fingerprint_template_id="FP1001",
             plate_number="LND-113JN",
             phone_number="+2348011112222",
-            is_admin=True,
         ),
         Staff(
             staff_id="STAFF002",
@@ -84,7 +108,6 @@ def seed_data():
             fingerprint_template_id="FP1002",
             plate_number="BDG-889HS",
             phone_number="+2348033334444",
-            is_admin=False,
         ),
     ])
     db.session.add_all([
@@ -205,24 +228,35 @@ def get_token_from_request():
     return request.args.get("token")
 
 
+def unauthorized_response():
+    return jsonify({"success": False, "message": "Unauthorized. Please log in again."}), 401
+
+
 def require_auth():
-    """Returns (staff, error_response). error_response is None when authorised."""
+    """Returns (staff, error_response). error_response is None when a staff
+    member (not an admin) is authorised."""
     token = get_token_from_request()
-    staff_id = sessions.get(token) if token else None
-    staff = find_staff(staff_id) if staff_id else None
+    session = sessions.get(token) if token else None
+    if not session or session["role"] != "staff":
+        return None, unauthorized_response()
+    staff = find_staff(session["id"])
     if not staff:
-        return None, (jsonify({"success": False, "message": "Unauthorized. Please log in again."}), 401)
+        return None, unauthorized_response()
     return staff, None
 
 
 def require_admin():
-    """Returns (staff, error_response). error_response is None when an admin is authorised."""
-    staff, error = require_auth()
-    if error:
-        return None, error
-    if not staff.get("is_admin"):
+    """Returns (admin, error_response). error_response is None when an admin
+    is authorised. Admins are a separate account type from staff - not a
+    flag on a staff record."""
+    token = get_token_from_request()
+    session = sessions.get(token) if token else None
+    if not session or session["role"] != "admin":
         return None, (jsonify({"success": False, "message": "Admin access required."}), 403)
-    return staff, None
+    admin = db.session.get(Admin, session["id"])
+    if not admin:
+        return None, (jsonify({"success": False, "message": "Admin access required."}), 403)
+    return admin.to_dict(), None
 
 
 def require_device():
@@ -248,22 +282,34 @@ def require_device():
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json(silent=True) or {}
-    staff_id = (data.get("staff_id") or "").strip()
+    login_id = (data.get("login_id") or "").strip()
     password = data.get("password") or ""
 
-    staff = find_staff(staff_id)
-    if not staff or not check_password_hash(staff["password_hash"], password):
-        return jsonify({"success": False, "message": "Invalid staff ID or password"}), 401
+    staff = find_staff(login_id)
+    if staff and check_password_hash(staff["password_hash"], password):
+        token = secrets.token_hex(16)
+        sessions[token] = {"role": "staff", "id": staff["staff_id"]}
+        return jsonify({
+            "success": True,
+            "token": token,
+            "role": "staff",
+            "staff_id": staff["staff_id"],
+            "name": staff["name"],
+        })
 
-    token = secrets.token_hex(16)
-    sessions[token] = staff["staff_id"]
+    admin = db.session.get(Admin, login_id)
+    if admin and check_password_hash(admin.password_hash, password):
+        token = secrets.token_hex(16)
+        sessions[token] = {"role": "admin", "id": admin.admin_id}
+        return jsonify({
+            "success": True,
+            "token": token,
+            "role": "admin",
+            "admin_id": admin.admin_id,
+            "name": admin.name,
+        })
 
-    return jsonify({
-        "success": True,
-        "token": token,
-        "staff_id": staff["staff_id"],
-        "name": staff["name"],
-    })
+    return jsonify({"success": False, "message": "Invalid ID or password"}), 401
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +421,6 @@ def admin_add_staff():
         fingerprint_template_id=fingerprint_template_id,
         plate_number=plate_number,
         phone_number=phone_number,
-        is_admin=False,
     ))
 
     if plate_number:
@@ -394,6 +439,18 @@ def admin_add_staff():
         "staff_id": staff_id,
         "default_password": DEFAULT_STAFF_PASSWORD,
     })
+
+
+# ---------------------------------------------------------------------------
+# Route 1d: admin - who am I (used by the admin page to confirm the session)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/admin/me", methods=["GET"])
+def admin_me():
+    admin, error = require_admin()
+    if error:
+        return error
+    return jsonify({"success": True, "admin_id": admin["admin_id"], "name": admin["name"]})
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +477,6 @@ def dashboard():
         "staff_id": staff["staff_id"],
         "name": staff["name"],
         "plate_number": staff["plate_number"],
-        "is_admin": bool(staff.get("is_admin")),
         "active_otps": active_otps,
         "recent_activity": logs[:5],
     })

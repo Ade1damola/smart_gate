@@ -51,5 +51,4 @@
   }
 
   loadLog();
-  showAdminTabIfAdmin();
 })();

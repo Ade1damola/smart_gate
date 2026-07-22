@@ -12,7 +12,7 @@
     event.preventDefault();
     errorBox.hidden = true;
 
-    const staff_id = document.getElementById("staff_id").value.trim();
+    const login_id = document.getElementById("login_id").value.trim();
     const password = document.getElementById("password").value;
 
     submitBtn.disabled = true;
@@ -20,16 +20,16 @@
 
     const { ok, data } = await apiFetch("/api/login", {
       method: "POST",
-      body: JSON.stringify({ staff_id, password }),
+      body: JSON.stringify({ login_id, password }),
     });
 
     if (ok && data.success) {
       setToken(data.token);
-      window.location.href = "dashboard.html";
+      window.location.href = data.role === "admin" ? "admin.html" : "dashboard.html";
       return;
     }
 
-    errorBox.textContent = data.message || "Login failed. Check your staff ID and password.";
+    errorBox.textContent = data.message || "Login failed. Check your ID and password.";
     errorBox.hidden = false;
     submitBtn.disabled = false;
     submitBtn.textContent = "Log In";

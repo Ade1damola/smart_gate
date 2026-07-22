@@ -133,5 +133,4 @@
   });
 
   loadDashboard();
-  showAdminTabIfAdmin();
 })();

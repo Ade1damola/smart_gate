@@ -1,7 +1,7 @@
 (function () {
   requireLogin();
 
-  const staffNameEl = document.getElementById("staff-name");
+  const adminNameEl = document.getElementById("admin-name");
   const form = document.getElementById("add-staff-form");
   const errorEl = document.getElementById("add-staff-error");
   const resultEl = document.getElementById("add-staff-result");
@@ -11,16 +11,16 @@
   document.getElementById("logout-btn").addEventListener("click", logout);
 
   async function guardAdmin() {
-    const { ok, status, data } = await apiFetch("/api/dashboard");
-    if (status === 401) {
+    const { ok, status, data } = await apiFetch("/api/admin/me");
+    if (status === 401 || status === 403) {
       logout();
       return;
     }
-    if (!ok || !data.success || !data.is_admin) {
-      window.location.href = "dashboard.html";
+    if (!ok || !data.success) {
+      logout();
       return;
     }
-    staffNameEl.textContent = data.name;
+    adminNameEl.textContent = data.name;
   }
 
   form.addEventListener("submit", async function (event) {

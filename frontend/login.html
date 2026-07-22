@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Staff Login</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="page page-center">
+    <div class="card" style="width: 100%;">
+      <h1>Staff Login</h1>
+      <p class="subtitle">Sign in to manage your gate access OTPs.</p>
+
+      <form id="login-form">
+        <label for="staff_id">Staff ID</label>
+        <input type="text" id="staff_id" name="staff_id" autocomplete="username" required />
+
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required />
+
+        <p id="login-error" class="error-message" hidden></p>
+
+        <button type="submit" class="btn btn-primary btn-large">Log In</button>
+      </form>
+      <p style="margin-top: 8px;"><a href="forgot-password.html" class="btn btn-link">Forgot password?</a></p>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/login.js"></script>
+</body>
+</html>

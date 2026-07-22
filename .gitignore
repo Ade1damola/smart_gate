@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Claude Code local settings (machine-specific, not project config)
+.claude/
+
+# Local SQLite dev database
+backend/data/smart_gate.db
+
+# Legacy local JSON data store (kept only for one-time migration; don't
+# commit real staff data)
+backend/data/*.json
+backend/data/*.json.bak

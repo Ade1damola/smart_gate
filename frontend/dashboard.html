@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div>
+        <h1 id="staff-name">--</h1>
+        <p id="plate-number" class="subtitle">Plate: --</p>
+      </div>
+      <button id="logout-btn" class="btn btn-link">Log out</button>
+    </header>
+
+    <nav class="tabs">
+      <a href="dashboard.html" class="tab active">Dashboard</a>
+      <a href="activity.html" class="tab">Activity Log</a>
+      <a href="admin.html" id="admin-nav-tab" class="tab" hidden>Admin</a>
+    </nav>
+
+    <section class="card">
+      <h2>Generate OTP</h2>
+      <form id="otp-form">
+        <label for="time-limit">Valid for</label>
+        <select id="time-limit">
+          <option value="5">5 minutes</option>
+          <option value="15" selected>15 minutes</option>
+          <option value="30">30 minutes</option>
+          <option value="60">1 hour</option>
+          <option value="custom">Custom...</option>
+        </select>
+        <input type="number" id="custom-minutes" min="1" max="1440" placeholder="Minutes" hidden />
+
+        <button type="submit" class="btn btn-primary btn-large">Generate OTP</button>
+      </form>
+
+      <div id="otp-result" class="otp-result" hidden>
+        <p class="otp-label">Share this code with your driver:</p>
+        <p id="otp-code" class="otp-code">------</p>
+        <p id="otp-expiry" class="subtitle"></p>
+      </div>
+      <p id="otp-error" class="error-message" hidden></p>
+    </section>
+
+    <section class="card">
+      <h2>Active OTPs</h2>
+      <ul id="active-otp-list" class="otp-list">
+        <li class="empty-message">No active OTPs</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Recent Activity</h2>
+      <ul id="recent-activity-list" class="activity-list">
+        <li class="empty-message">No activity yet</li>
+      </ul>
+      <a href="activity.html" class="btn btn-link">View full activity log &rarr;</a>
+    </section>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div>
+        <h1 id="staff-name">--</h1>
+        <p class="subtitle">Admin</p>
+      </div>
+      <button id="logout-btn" class="btn btn-link">Log out</button>
+    </header>
+
+    <nav class="tabs">
+      <a href="dashboard.html" class="tab">Dashboard</a>
+      <a href="activity.html" class="tab">Activity Log</a>
+      <a href="admin.html" class="tab active">Admin</a>
+    </nav>
+
+    <section class="card">
+      <h2>Add New Staff</h2>
+      <form id="add-staff-form">
+        <label for="staff_id">Staff ID</label>
+        <input type="text" id="staff_id" name="staff_id" required />
+
+        <label for="name">Full name</label>
+        <input type="text" id="name" name="name" required />
+
+        <label for="phone_number">Phone number</label>
+        <input type="tel" id="phone_number" name="phone_number" placeholder="+234..." required />
+
+        <label for="plate_number">Plate number (optional)</label>
+        <input type="text" id="plate_number" name="plate_number" />
+
+        <label for="fingerprint_template_id">Fingerprint template ID (optional)</label>
+        <input type="text" id="fingerprint_template_id" name="fingerprint_template_id" />
+
+        <p id="add-staff-error" class="error-message" hidden></p>
+
+        <button type="submit" class="btn btn-primary btn-large">Add Staff</button>
+      </form>
+
+      <div id="add-staff-result" class="otp-result" hidden>
+        <p class="otp-label">Staff added. Share this default password with them:</p>
+        <p id="default-password" class="otp-code" style="font-size: 1.5rem;">------</p>
+        <p class="subtitle">They should log in and use "Forgot password?" to set their own password.</p>
+      </div>
+    </section>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/admin.js"></script>
+</body>
+</html>

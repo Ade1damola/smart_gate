@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Activity Log</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div>
+        <h1>Activity Log</h1>
+        <p id="plate-number" class="subtitle">Plate: --</p>
+      </div>
+      <button id="logout-btn" class="btn btn-link">Log out</button>
+    </header>
+
+    <nav class="tabs">
+      <a href="dashboard.html" class="tab">Dashboard</a>
+      <a href="activity.html" class="tab active">Activity Log</a>
+      <a href="admin.html" id="admin-nav-tab" class="tab" hidden>Admin</a>
+    </nav>
+
+    <section class="card">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Direction</th>
+            <th>Method</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="log-body">
+          <tr><td colspan="5" class="empty-message">Loading...</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/activity.js"></script>
+</body>
+</html>

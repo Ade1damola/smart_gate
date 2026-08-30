@@ -232,6 +232,10 @@ if __name__ == "__main__":
 
     if not data.get("is_staff_vehicle"):
         print("Non-staff vehicle. Gate opens normally.")
+        if gate_client.open_gate_for_non_staff():
+            print("Gate opened.")
+        else:
+            print("Could not reach ESP32 to open gate - manual override needed.")
         sys.exit(0)
 
     print(f"STAFF CAR: {data['owner_name']}")

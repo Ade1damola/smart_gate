@@ -26,13 +26,14 @@
  */
 
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <Adafruit_Fingerprint.h>
+#include <Adafruit_Fingerprint.h> 
 #include <Keypad.h>
 #include <ESP32Servo.h>
 
@@ -41,21 +42,20 @@
 // CONFIGURATION - CHANGE THESE TO MATCH YOUR SETUP
 // ============================================================
 
-// Wi-Fi credentials (campus Wi-Fi or hotspot)
-const char* WIFI_SSID = "YOUR_WIFI_NAME";
-const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
+// WIFI_SSID, WIFI_PASS, DEVICE_API_KEY live in secrets.h (gitignored, never
+// committed). Copy secrets.h.example to secrets.h and fill in your real
+// values before building.
+#include "secrets.h"
 
 // Hosted server URL (your Render web service)
-const char* SERVER_URL = "https://YOUR_APP_NAME.onrender.com";
+const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
 
 // If using local Flask server on laptop for testing, use this instead:
 // const char* SERVER_URL = "http://192.168.1.50:5000";
 
-// Shared secret sent as the X-Device-Key header on every hosted-server call.
-// Must exactly match the DEVICE_API_KEY environment variable set on the
-// server. Leave as "" only while testing against a local server that has no
-// DEVICE_API_KEY configured.
-const char* DEVICE_API_KEY = "YOUR_DEVICE_API_KEY";
+// DEVICE_API_KEY (from secrets.h) is sent as the X-Device-Key header on
+// every hosted-server call. Must exactly match the DEVICE_API_KEY
+// environment variable set on the server.
 
 
 // ============================================================
@@ -80,7 +80,7 @@ const char* DEVICE_API_KEY = "YOUR_DEVICE_API_KEY";
 #define OLED_SDA    8
 #define OLED_SCL    9
 #define OLED_WIDTH  128
-#define OLED_HEIGHT 64
+#define OLED_HEIGHT 32   // 0.91" panels are 128x32, not 128x64
 #define OLED_ADDR   0x3C
 
 // Buzzer
@@ -97,7 +97,7 @@ const char* DEVICE_API_KEY = "YOUR_DEVICE_API_KEY";
 // TIMING CONSTANTS
 // ============================================================
 
-#define VERIFICATION_TIMEOUT_MS  30000   // 30 seconds to verify before timeout
+#define VERIFICATION_TIMEOUT_MS  60000   // 60 seconds to verify before timeout
 #define GATE_OPEN_DURATION_MS    5000    // Keep gate open for 5 seconds
 #define BUZZER_BEEP_MS           300     // Single beep duration
 #define OTP_LENGTH               6       // 6-digit OTP
@@ -110,8 +110,8 @@ const char* DEVICE_API_KEY = "YOUR_DEVICE_API_KEY";
 // OLED display
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 
-// Fingerprint sensor on Serial1
-Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial1);
+// Fingerprint sensor on Serial1 (disabled - no sensor yet)
+// Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial1);
 
 // Keypad setup
 const byte ROWS = 4;
@@ -160,11 +160,11 @@ void displayMessage(String line1, String line2, String line3) {
     display.println(line1);
 
     // Line 2: medium text
-    display.setCursor(0, 22);
+    display.setCursor(0, 12);
     display.println(line2);
 
     // Line 3: small text
-    display.setCursor(0, 44);
+    display.setCursor(0, 24);
     display.println(line3);
 
     display.display();
@@ -180,7 +180,7 @@ void displayLargeOTP(String otp, int digits_entered) {
 
     // Show entered digits as large text
     display.setTextSize(2);
-    display.setCursor(10, 25);
+    display.setCursor(4, 8);
 
     // Show entered digits and underscores for remaining
     for (int i = 0; i < OTP_LENGTH; i++) {
@@ -189,12 +189,11 @@ void displayLargeOTP(String otp, int digits_entered) {
         } else {
             display.print("_");
         }
-        if (i < OTP_LENGTH - 1) display.print(" ");
     }
 
     display.setTextSize(1);
-    display.setCursor(0, 52);
-    display.println("# = Confirm  * = Clear");
+    display.setCursor(0, 24);
+    display.println("#=Confirm  *=Clear");
 
     display.display();
 }
@@ -251,9 +250,10 @@ void openGate() {
 
 
 // ============================================================
-// FINGERPRINT FUNCTIONS
+// FINGERPRINT FUNCTIONS (disabled - no sensor yet, re-enable when wired)
 // ============================================================
 
+#if 0
 int scanFingerprint() {
     /*
      * Attempts to read and match a fingerprint.
@@ -340,6 +340,7 @@ bool enrollFingerprint(int id) {
 
     return false;
 }
+#endif  // FINGERPRINT FUNCTIONS
 
 
 // ============================================================
@@ -408,6 +409,7 @@ String readOTPFromKeypad() {
 // SERVER COMMUNICATION FUNCTIONS
 // ============================================================
 
+#if 0  // FINGERPRINT DISABLED - no sensor yet
 bool verifyFingerprintOnServer(String staffId, int fingerprintId, String plate, String eventType) {
     /*
      * Sends fingerprint verification result to the hosted server.
@@ -453,6 +455,7 @@ bool verifyFingerprintOnServer(String staffId, int fingerprintId, String plate, 
     http.end();
     return false;
 }
+#endif  // FINGERPRINT DISABLED
 
 bool verifyOTPOnServer(String staffId, String otpCode, String plate, String eventType) {
     /*
@@ -539,6 +542,7 @@ void logEventToServer(String staffId, String plate, String method,
     Serial.println(httpCode);
 }
 
+#if 0  // FINGERPRINT DISABLED - no sensor yet
 bool pushFingerprintIdToServer(String staffId, int fingerprintId) {
     /*
      * Tells the hosted server which template ID a staff member was just
@@ -566,6 +570,7 @@ bool pushFingerprintIdToServer(String staffId, int fingerprintId) {
     http.end();
     return ok;
 }
+#endif  // FINGERPRINT DISABLED
 
 
 // ============================================================
@@ -640,6 +645,25 @@ void handleStatus() {
     localServer.send(200, "application/json", response);
 }
 
+void handleOpenGate() {
+    /*
+     * Called by the Raspberry Pi when ANPR reads a plate that isn't a
+     * staff vehicle - no owner/OTP verification needed, just open up.
+     * GET /open_gate
+     */
+    if (awaitingVerification) {
+        localServer.send(409, "application/json",
+            "{\"error\":\"Already processing a staff vehicle verification\"}");
+        return;
+    }
+
+    Serial.println("[GATE] Non-staff vehicle - opening directly.");
+    localServer.send(200, "application/json",
+        "{\"status\":\"OPENING\"}");
+    openGate();
+}
+
+#if 0  // FINGERPRINT DISABLED - no sensor yet, /enroll route not registered either
 void handleEnrollRequest() {
     /*
      * Triggered by the admin to enroll a new fingerprint for a staff member
@@ -682,6 +706,7 @@ void handleEnrollRequest() {
     delay(2000);
     displayMessage("SMART GATE", "System ready", "Waiting for vehicle...");
 }
+#endif  // FINGERPRINT DISABLED
 
 
 // ============================================================
@@ -720,6 +745,7 @@ void processVerification() {
         promptShown = true;
     }
 
+#if 0  // FINGERPRINT DISABLED - no sensor yet, OTP is the only verification path for now
     // --- Check for fingerprint ---
     int fpResult = scanFingerprint();
 
@@ -769,6 +795,7 @@ void processVerification() {
         }
         return;
     }
+#endif  // FINGERPRINT DISABLED
 
     // --- Check for keypad input (OTP) ---
     char key = keypad.getKey();
@@ -881,7 +908,8 @@ void setup() {
     }
     displayMessage("SMART GATE", "Starting up...", "");
 
-    // --- Initialize fingerprint sensor ---
+    // --- Initialize fingerprint sensor (disabled - no sensor yet) ---
+#if 0
     Serial1.begin(57600, SERIAL_8N1, FP_RX_PIN, FP_TX_PIN);
     finger.begin(57600);
 
@@ -894,6 +922,7 @@ void setup() {
         Serial.println("[INIT] Fingerprint sensor: NOT FOUND!");
         Serial.println("       Check wiring: TX→GPIO18, RX→GPIO17");
     }
+#endif
 
     // --- Initialize servo ---
     gateServo.attach(SERVO_PIN);
@@ -926,6 +955,12 @@ void setup() {
         Serial.print("[WIFI] Server: ");
         Serial.println(SERVER_URL);
 
+        if (MDNS.begin("verigate")) {
+            Serial.println("[MDNS] Reachable at http://verigate.local");
+        } else {
+            Serial.println("[MDNS] Failed to start!");
+        }
+
         displayMessage("WIFI CONNECTED",
                        WiFi.localIP().toString(),
                        "");
@@ -938,7 +973,8 @@ void setup() {
     // --- Set up local web server routes ---
     localServer.on("/staff_alert", HTTP_GET, handleStaffAlert);
     localServer.on("/status", HTTP_GET, handleStatus);
-    localServer.on("/enroll", HTTP_GET, handleEnrollRequest);
+    localServer.on("/open_gate", HTTP_GET, handleOpenGate);
+    // localServer.on("/enroll", HTTP_GET, handleEnrollRequest);  // disabled - no sensor yet
     localServer.begin();
     Serial.println("[SERVER] Local web server started on port 80");
 

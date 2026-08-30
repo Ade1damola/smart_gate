@@ -13,9 +13,9 @@ import os
 
 import requests
 
-SERVER_URL = os.environ.get("SERVER_URL", "http://localhost:5000")
+SERVER_URL = os.environ.get("SERVER_URL", "https://verigate-ry5y.onrender.com")
 DEVICE_API_KEY = os.environ.get("DEVICE_API_KEY", "")
-ESP32_URL = os.environ.get("ESP32_URL", "")
+ESP32_URL = os.environ.get("ESP32_URL", "http://verigate.local")
 
 
 def _device_headers():
@@ -66,6 +66,25 @@ def verify_otp(staff_id, otp_code, plate_number, event_type="entry"):
         timeout=10,
     )
     return response.json()
+
+
+def open_gate_for_non_staff():
+    """GET /open_gate on the ESP32 so it opens the barrier directly for a
+    non-staff vehicle - no fingerprint/OTP verification needed.
+
+    Returns True if the ESP32 acknowledged it, False if ESP32_URL isn't
+    configured, the ESP32 is unreachable, or it's busy verifying another
+    vehicle (caller should fall back to a manual/physical override).
+    """
+    if not ESP32_URL:
+        return False
+
+    try:
+        response = requests.get(f"{ESP32_URL}/open_gate", timeout=5)
+        return response.status_code == 200
+    except requests.RequestException as exc:
+        print(f"Could not reach ESP32 at {ESP32_URL}: {exc}")
+        return False
 
 
 def notify_esp32(check_plate_data, event_type="entry"):

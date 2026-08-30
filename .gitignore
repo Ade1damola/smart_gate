@@ -14,3 +14,11 @@ backend/data/smart_gate.db
 # commit real staff data)
 backend/data/*.json
 backend/data/*.json.bak
+
+# Real Wi-Fi/API credentials for the ESP32 sketch - copy secrets.h.example
+# to secrets.h and fill in real values, never commit secrets.h itself
+esp32/smart_gate_esp32/secrets.h
+
+# Test/demo images - not source, not needed in the repo
+anpr/test_images/
+output_images/

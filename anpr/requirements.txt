@@ -1,0 +1,16 @@
+requests
+
+# Pinned to a 4.x release: OpenCV 5.0 dropped cv2.CascadeClassifier from the
+# core module, which anpr_engine.py's Haar-cascade plate detector needs.
+# Do not have opencv-python / opencv-contrib-python / any other opencv-*
+# variant installed alongside this one - having more than one installed at
+# once causes broken/missing attributes even within a single import.
+opencv-python-headless==4.10.0.84
+
+# Only needed by anpr_engine_easyocr.py (lazily imported).
+easyocr
+
+# Only needed for test_accuracy_report.ipynb.
+pandas
+matplotlib
+jupyter

@@ -43,12 +43,16 @@ TERMII_SENDER_ID = os.environ.get("TERMII_SENDER_ID", "")
 
 # Default password assigned to every newly-added staff member. They're
 # expected to use the "forgot password" OTP flow to set their own password.
-DEFAULT_STAFF_PASSWORD = "Welcome123!"
+# Real value set via the DEFAULT_STAFF_PASSWORD env var on the server; this
+# fallback is only for local dev and is not a real credential.
+DEFAULT_STAFF_PASSWORD = os.environ.get("DEFAULT_STAFF_PASSWORD", "local-dev-only")
 
 # Default password for the seeded admin account. Admins have no phone number
 # and no forgot-password flow of their own, so this only changes if someone
-# updates it directly in the database.
-DEFAULT_ADMIN_PASSWORD = "Verigate752$"
+# updates it directly in the database. Real value set via the
+# DEFAULT_ADMIN_PASSWORD env var on the server; this fallback is only for
+# local dev and is not a real credential.
+DEFAULT_ADMIN_PASSWORD = os.environ.get("DEFAULT_ADMIN_PASSWORD", "local-dev-only")
 
 # How long a password-reset OTP stays valid.
 RESET_OTP_VALID_MINUTES = 10

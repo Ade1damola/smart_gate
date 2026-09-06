@@ -12,7 +12,7 @@
  *   - Buzzes and displays on OLED to notify the guard
  *   - Reads fingerprint for owner verification
  *   - Reads OTP from keypad for non-owner verification
- *   - Sends verification requests to the hosted server (PythonAnywhere)
+ *   - Sends verification requests to the hosted server (Render)
  *   - Controls the gate servo motor
  *   - Logs events to the hosted server
  * 
@@ -110,8 +110,8 @@ const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
 // OLED display
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 
-// Fingerprint sensor on Serial1 (disabled - no sensor yet)
-// Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial1);
+// Fingerprint sensor on Serial1
+Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial1);
 
 // Keypad setup
 const byte ROWS = 4;
@@ -198,6 +198,20 @@ void displayLargeOTP(String otp, int digits_entered) {
     display.display();
 }
 
+void showIdleScreen() {
+    /*
+     * The screen shown whenever the gate isn't mid-verification. Always
+     * reflects live Wi-Fi state so the guard has a way to tell the system
+     * is offline without needing a Serial Monitor - a plain "System ready"
+     * regardless of connectivity would be actively misleading in the field.
+     */
+    if (WiFi.status() == WL_CONNECTED) {
+        displayMessage("SMART GATE", "System ready", "Waiting for vehicle...");
+    } else {
+        displayMessage("SMART GATE", "OFFLINE", "No server verification");
+    }
+}
+
 
 // ============================================================
 // BUZZER FUNCTIONS
@@ -240,20 +254,19 @@ void openGate() {
     displayMessage("ACCESS GRANTED", "Gate opening...", "");
     beepSuccess();
 
-    gateServo.write(90);               // Lift barrier (90 degrees)
+    gateServo.write(180);              // Lift barrier (180 degrees)
     delay(GATE_OPEN_DURATION_MS);      // Hold open
     gateServo.write(0);                // Lower barrier (0 degrees)
 
     Serial.println("[GATE] Closed.");
-    displayMessage("SMART GATE", "System ready", "Waiting for vehicle...");
+    showIdleScreen();
 }
 
 
 // ============================================================
-// FINGERPRINT FUNCTIONS (disabled - no sensor yet, re-enable when wired)
+// FINGERPRINT FUNCTIONS
 // ============================================================
 
-#if 0
 int scanFingerprint() {
     /*
      * Attempts to read and match a fingerprint.
@@ -340,7 +353,6 @@ bool enrollFingerprint(int id) {
 
     return false;
 }
-#endif  // FINGERPRINT FUNCTIONS
 
 
 // ============================================================
@@ -409,7 +421,6 @@ String readOTPFromKeypad() {
 // SERVER COMMUNICATION FUNCTIONS
 // ============================================================
 
-#if 0  // FINGERPRINT DISABLED - no sensor yet
 bool verifyFingerprintOnServer(String staffId, int fingerprintId, String plate, String eventType) {
     /*
      * Sends fingerprint verification result to the hosted server.
@@ -420,6 +431,11 @@ bool verifyFingerprintOnServer(String staffId, int fingerprintId, String plate, 
     String url = String(SERVER_URL) + "/api/verify_fingerprint";
 
     http.begin(url);
+    // Render's free tier spins down when idle and can take 30-60s to wake
+    // back up on the next request - the default ~5s HTTPClient timeout
+    // would wrongly read that as a failure (and for verification calls,
+    // wrongly deny a legitimate staff member).
+    http.setTimeout(30000);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("X-Device-Key", DEVICE_API_KEY);
 
@@ -455,7 +471,6 @@ bool verifyFingerprintOnServer(String staffId, int fingerprintId, String plate, 
     http.end();
     return false;
 }
-#endif  // FINGERPRINT DISABLED
 
 bool verifyOTPOnServer(String staffId, String otpCode, String plate, String eventType) {
     /*
@@ -467,6 +482,11 @@ bool verifyOTPOnServer(String staffId, String otpCode, String plate, String even
     String url = String(SERVER_URL) + "/api/verify_otp";
 
     http.begin(url);
+    // Render's free tier spins down when idle and can take 30-60s to wake
+    // back up on the next request - the default ~5s HTTPClient timeout
+    // would wrongly read that as a failure (and for verification calls,
+    // wrongly deny a legitimate staff member).
+    http.setTimeout(30000);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("X-Device-Key", DEVICE_API_KEY);
 
@@ -521,6 +541,11 @@ void logEventToServer(String staffId, String plate, String method,
     String url = String(SERVER_URL) + "/api/log_event";
 
     http.begin(url);
+    // Render's free tier spins down when idle and can take 30-60s to wake
+    // back up on the next request - the default ~5s HTTPClient timeout
+    // would wrongly read that as a failure (and for verification calls,
+    // wrongly deny a legitimate staff member).
+    http.setTimeout(30000);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("X-Device-Key", DEVICE_API_KEY);
 
@@ -542,7 +567,6 @@ void logEventToServer(String staffId, String plate, String method,
     Serial.println(httpCode);
 }
 
-#if 0  // FINGERPRINT DISABLED - no sensor yet
 bool pushFingerprintIdToServer(String staffId, int fingerprintId) {
     /*
      * Tells the hosted server which template ID a staff member was just
@@ -553,6 +577,11 @@ bool pushFingerprintIdToServer(String staffId, int fingerprintId) {
     String url = String(SERVER_URL) + "/api/device/staff/" + staffId + "/fingerprint";
 
     http.begin(url);
+    // Render's free tier spins down when idle and can take 30-60s to wake
+    // back up on the next request - the default ~5s HTTPClient timeout
+    // would wrongly read that as a failure (and for verification calls,
+    // wrongly deny a legitimate staff member).
+    http.setTimeout(30000);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("X-Device-Key", DEVICE_API_KEY);
 
@@ -570,7 +599,6 @@ bool pushFingerprintIdToServer(String staffId, int fingerprintId) {
     http.end();
     return ok;
 }
-#endif  // FINGERPRINT DISABLED
 
 
 // ============================================================
@@ -663,7 +691,6 @@ void handleOpenGate() {
     openGate();
 }
 
-#if 0  // FINGERPRINT DISABLED - no sensor yet, /enroll route not registered either
 void handleEnrollRequest() {
     /*
      * Triggered by the admin to enroll a new fingerprint for a staff member
@@ -704,9 +731,8 @@ void handleEnrollRequest() {
     }
 
     delay(2000);
-    displayMessage("SMART GATE", "System ready", "Waiting for vehicle...");
+    showIdleScreen();
 }
-#endif  // FINGERPRINT DISABLED
 
 
 // ============================================================
@@ -731,7 +757,7 @@ void processVerification() {
 
         awaitingVerification = false;
         delay(3000);
-        displayMessage("SMART GATE", "System ready", "Waiting for vehicle...");
+        showIdleScreen();
         return;
     }
 
@@ -745,7 +771,6 @@ void processVerification() {
         promptShown = true;
     }
 
-#if 0  // FINGERPRINT DISABLED - no sensor yet, OTP is the only verification path for now
     // --- Check for fingerprint ---
     int fpResult = scanFingerprint();
 
@@ -791,11 +816,10 @@ void processVerification() {
         promptShown = false;
         if (fpResult == pendingFingerprintId) {
             awaitingVerification = false;
-            displayMessage("SMART GATE", "System ready", "Waiting for vehicle...");
+            showIdleScreen();
         }
         return;
     }
-#endif  // FINGERPRINT DISABLED
 
     // --- Check for keypad input (OTP) ---
     char key = keypad.getKey();
@@ -875,7 +899,7 @@ void processVerification() {
         promptShown = false;
         if (otp.length() == OTP_LENGTH) {
             awaitingVerification = false;
-            displayMessage("SMART GATE", "System ready", "Waiting for vehicle...");
+            showIdleScreen();
         }
     }
 }
@@ -908,8 +932,7 @@ void setup() {
     }
     displayMessage("SMART GATE", "Starting up...", "");
 
-    // --- Initialize fingerprint sensor (disabled - no sensor yet) ---
-#if 0
+    // --- Initialize fingerprint sensor ---
     Serial1.begin(57600, SERIAL_8N1, FP_RX_PIN, FP_TX_PIN);
     finger.begin(57600);
 
@@ -922,7 +945,6 @@ void setup() {
         Serial.println("[INIT] Fingerprint sensor: NOT FOUND!");
         Serial.println("       Check wiring: TX→GPIO18, RX→GPIO17");
     }
-#endif
 
     // --- Initialize servo ---
     gateServo.attach(SERVO_PIN);
@@ -974,14 +996,14 @@ void setup() {
     localServer.on("/staff_alert", HTTP_GET, handleStaffAlert);
     localServer.on("/status", HTTP_GET, handleStatus);
     localServer.on("/open_gate", HTTP_GET, handleOpenGate);
-    // localServer.on("/enroll", HTTP_GET, handleEnrollRequest);  // disabled - no sensor yet
+    localServer.on("/enroll", HTTP_GET, handleEnrollRequest);
     localServer.begin();
     Serial.println("[SERVER] Local web server started on port 80");
 
     // --- Startup complete ---
     delay(1000);
     beepSuccess();
-    displayMessage("SMART GATE", "System ready", "Waiting for vehicle...");
+    showIdleScreen();
 
     Serial.println("\n========================================");
     Serial.println("  SYSTEM READY");
@@ -1009,12 +1031,22 @@ void loop() {
 
     // Check Wi-Fi connection and reconnect if needed
     static unsigned long lastWifiCheck = 0;
+    static bool wifiWasConnected = true;
     if (millis() - lastWifiCheck > 10000) {  // Check every 10 seconds
         lastWifiCheck = millis();
-        if (WiFi.status() != WL_CONNECTED) {
+        bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+
+        if (!wifiConnected) {
             Serial.println("[WIFI] Disconnected! Reconnecting...");
             WiFi.reconnect();
         }
+
+        // Refresh the OLED the moment connectivity actually changes, so the
+        // guard sees it flip live instead of only at the next staff alert.
+        if (wifiConnected != wifiWasConnected && !awaitingVerification) {
+            showIdleScreen();
+        }
+        wifiWasConnected = wifiConnected;
     }
 
     delay(10);  // Small delay to prevent watchdog timer reset

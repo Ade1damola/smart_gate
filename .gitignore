@@ -15,10 +15,17 @@ backend/data/smart_gate.db
 backend/data/*.json
 backend/data/*.json.bak
 
+backend/set_staff_name.py
+backend/set_staff_password.py
+backend/rotate_admin_password.py
 # Real Wi-Fi/API credentials for the ESP32 sketch - copy secrets.h.example
 # to secrets.h and fill in real values, never commit secrets.h itself
 esp32/smart_gate_esp32/secrets.h
+esp32/keypad_test/
+esp32/servo_test/
 
 # Test/demo images - not source, not needed in the repo
 anpr/test_images/
 output_images/
+anpr/test_accuracy_report.ipynb
+anpr/test_accuracy.py

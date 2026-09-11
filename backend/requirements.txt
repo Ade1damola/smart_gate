@@ -3,5 +3,3 @@ flask-sqlalchemy
 psycopg2-binary
 gunicorn
 requests
-opencv-python==4.10.0.84
-rapidocr_onnxruntime==1.2.3

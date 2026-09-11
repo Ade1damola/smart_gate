@@ -115,15 +115,6 @@ select {
   font-size: 0.9rem;
 }
 
-.warning-message {
-  color: #92400e;
-  background: #fef3c7;
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin: 12px 0 0;
-  font-size: 0.9rem;
-}
-
 .topbar {
   display: flex;
   justify-content: space-between;

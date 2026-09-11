@@ -933,6 +933,7 @@ void setup() {
     displayMessage("SMART GATE", "Starting up...", "");
 
     // --- Initialize fingerprint sensor ---
+    displayMessage("SMART GATE", "Checking", "fingerprint...");
     Serial1.begin(57600, SERIAL_8N1, FP_RX_PIN, FP_TX_PIN);
     finger.begin(57600);
 

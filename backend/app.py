@@ -10,17 +10,22 @@ import os
 import random
 import secrets
 import string
+import sys
+import tempfile
 from datetime import datetime, timedelta
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 
 from models import db, Staff, Admin, Vehicle, Otp, PasswordResetOtp, Log
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 FRONTEND_DIR = os.path.join(BASE_DIR, "..", "frontend")
+ANPR_DIR = os.path.join(BASE_DIR, "..", "anpr")
+ALLOWED_ANPR_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -58,6 +63,7 @@ DEFAULT_ADMIN_PASSWORD = os.environ.get("DEFAULT_ADMIN_PASSWORD", "local-dev-onl
 RESET_OTP_VALID_MINUTES = 10
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
 app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db.init_app(app)
@@ -722,6 +728,91 @@ def update_staff_fingerprint(staff_id):
     db.session.commit()
 
     return jsonify({"success": True, "message": "Fingerprint template recorded"})
+
+
+# ---------------------------------------------------------------------------
+# Route 11: run RapidOCR and notify the ESP32 from an uploaded image
+# ---------------------------------------------------------------------------
+
+@app.route("/api/anpr/rapidocr", methods=["POST"])
+def rapidocr_upload():
+    uploaded_file = request.files.get("image")
+    if uploaded_file is None or not uploaded_file.filename:
+        return jsonify({"success": False, "message": "Please choose an image file."}), 400
+
+    safe_name = secure_filename(uploaded_file.filename)
+    extension = os.path.splitext(safe_name)[1].lower()
+    if extension not in ALLOWED_ANPR_EXTENSIONS:
+        return jsonify({"success": False, "message": "Upload a JPG, PNG, BMP, or WEBP image."}), 400
+
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temporary_file:
+            uploaded_file.save(temporary_file)
+            temporary_path = temporary_file.name
+
+        if ANPR_DIR not in sys.path:
+            sys.path.insert(0, ANPR_DIR)
+        from anpr_engine_rapidocr import run_anpr
+        import gate_client
+
+        plate = run_anpr(temporary_path)
+        if not plate:
+            return jsonify({
+                "success": True,
+                "plate": None,
+                "action": "no_plate",
+                "message": "No plate detected. The ESP32 was not contacted.",
+            })
+
+        try:
+            check_data = gate_client.request_check_plate(plate)
+        except requests.RequestException as exc:
+            app.logger.warning("Could not check plate with backend: %s", exc)
+            return jsonify({
+                "success": False,
+                "plate": plate,
+                "message": "Plate detected, but the plate-check server could not be reached.",
+            }), 502
+
+        if not check_data.get("is_staff_vehicle"):
+            gate_opened = gate_client.open_gate_for_non_staff()
+            return jsonify({
+                "success": True,
+                "plate": plate,
+                "action": "open_gate" if gate_opened else "open_gate_failed",
+                "message": "Non-staff vehicle: gate opened." if gate_opened else "Non-staff vehicle detected, but the ESP32 could not be reached.",
+                "esp32_notified": gate_opened,
+            })
+
+        esp32_response = gate_client.notify_esp32(check_data, event_type="entry")
+        if esp32_response is None:
+            return jsonify({
+                "success": False,
+                "plate": plate,
+                "action": "notify_failed",
+                "message": "Staff vehicle detected, but the ESP32 could not be reached.",
+                "staff_vehicle": True,
+            }), 502
+
+        return jsonify({
+            "success": True,
+            "plate": plate,
+            "action": "staff_alert",
+            "message": "Staff vehicle detected. ESP32 notified for verification.",
+            "staff_vehicle": True,
+            "owner_name": check_data.get("owner_name"),
+            "esp32_response": esp32_response,
+        })
+    except Exception as exc:
+        app.logger.exception("RapidOCR upload failed")
+        return jsonify({"success": False, "message": f"RapidOCR failed: {type(exc).__name__}"}), 500
+    finally:
+        if temporary_path:
+            try:
+                os.remove(temporary_path)
+            except OSError:
+                app.logger.warning("Could not remove temporary ANPR file: %s", temporary_path)
 
 
 # ---------------------------------------------------------------------------

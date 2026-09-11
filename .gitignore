@@ -29,3 +29,6 @@ anpr/test_images/
 output_images/
 anpr/test_accuracy_report.ipynb
 anpr/test_accuracy.py
+anpr/analysis_outputs/
+anpr/anpr_engine_roboflow.py
+anpr/ocr_comparison_analysis.ipynb

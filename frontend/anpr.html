@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vehicle Plate Scan</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="page page-center">
+    <main class="card anpr-card">
+      <h1>Vehicle Plate Scan</h1>
+      <p class="warning-message">Use this page only on your trusted gate network. A successful scan can trigger the gate workflow.</p>
+
+      <form id="anpr-form">
+        <label for="anpr-image">Vehicle image</label>
+        <input type="file" id="anpr-image" name="image" accept="image/jpeg,image/png,image/bmp,image/webp" required />
+        <p id="anpr-error" class="error-message" hidden></p>
+        <button type="submit" class="btn btn-primary btn-large">Scan</button>
+      </form>
+
+      <div id="anpr-result" class="otp-result" hidden>
+        <p class="otp-label">Detected plate</p>
+        <p id="anpr-plate" class="otp-code">--</p>
+        <p id="anpr-message" class="subtitle"></p>
+      </div>
+    </main>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/anpr.js"></script>
+</body>
+</html>

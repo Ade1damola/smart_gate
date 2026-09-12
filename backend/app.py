@@ -9,8 +9,10 @@ gate hardware.
 import os
 import random
 import secrets
+import smtplib
 import string
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
@@ -40,8 +42,8 @@ DEVICE_API_KEY = os.environ.get("DEVICE_API_KEY", "")
 # reset code is printed to the console instead of actually being texted.
 TERMII_API_KEY = os.environ.get("TERMII_API_KEY", "")
 TERMII_SENDER_ID = os.environ.get("TERMII_SENDER_ID", "")
-RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "Verigate <onboarding@resend.dev>")
+GMAIL_EMAIL = os.environ.get("GMAIL_EMAIL", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 
 # Default password assigned to every newly-added staff member. They're
 # expected to use the "forgot password" OTP flow to set their own password.
@@ -242,58 +244,37 @@ def send_reset_sms(phone_number, code):
 
 
 def send_otp_email(staff, code, expiry):
-    """Send a gate OTP through Resend when email delivery is configured."""
+    """Send a gate OTP through Gmail SMTP when email delivery is configured."""
     email = (staff.get("email") or "").strip()
     if not email:
         return False, "No email address is saved for this staff member."
-    if not RESEND_API_KEY:
+    if not GMAIL_EMAIL or not GMAIL_APP_PASSWORD:
         print(f"[SIMULATED EMAIL to {email}] OTP {code} expires {expiry}")
-        return False, "Resend is not configured; OTP was generated locally."
+        return False, "Gmail SMTP is not configured; OTP was generated locally."
 
     expiry_text = expiry.strftime("%I:%M %p, %d %B %Y")
-    payload = {
-        "from": RESEND_FROM_EMAIL,
-        "to": [email],
-        "subject": "Your Verigate OTP Has Been Generated",
-        "text": (
-            f"Hi {staff['name']},\n\n"
-            f"You've successfully generated a One-Time Password for your vehicle ({staff['plate_number']}).\n\n"
-            f"OTP Code: {code}\n\n"
-            f"Valid until: {expiry_text}\n\n"
-            "Share this code with the person driving your car. They will enter it on the keypad at the gate to gain access. "
-            "This code is single-use and will expire automatically after the time limit you selected.\n\n"
-            "Didn't request this? If you did not generate this OTP, please log in to your Verigate dashboard immediately and revoke it, or contact the security office.\n\n"
-            "Verigate Smart Gate Access System"
-        ),
-        "html": (
-            f"<p>Hi <strong>{staff['name']}</strong>,</p>"
-            f"<p>You've successfully generated a One-Time Password for your vehicle (<strong>{staff['plate_number']}</strong>).</p>"
-            f"<p><strong>OTP Code:</strong></p><h2>{code}</h2>"
-            f"<p><strong>Valid until:</strong> {expiry_text}</p>"
-            "<p>Share this code with the person driving your car. They will enter it on the keypad at the gate to gain access. "
-            "This code is single-use and will expire automatically after the time limit you selected.</p>"
-            "<p><strong>Didn't request this?</strong> If you did not generate this OTP, please log in to your Verigate dashboard immediately and revoke it, or contact the security office.</p>"
-            "<p>Verigate Smart Gate Access System</p>"
-        ),
-    }
+    message = EmailMessage()
+    message["From"] = GMAIL_EMAIL
+    message["To"] = email
+    message["Subject"] = "Your Verigate OTP Has Been Generated"
+    message.set_content(
+        f"Hi {staff['name']},\n\n"
+        f"You've successfully generated a One-Time Password for your vehicle ({staff['plate_number']}).\n\n"
+        f"OTP Code: {code}\n\n"
+        f"Valid until: {expiry_text}\n\n"
+        "Share this code with the person driving your car. They will enter it on the keypad at the gate to gain access. "
+        "This code is single-use and will expire automatically after the time limit you selected.\n\n"
+        "Didn't request this? If you did not generate this OTP, please log in to your Verigate dashboard immediately and revoke it, or contact the security office.\n\n"
+        "Verigate Smart Gate Access System"
+    )
     try:
-        response = requests.post(
-            "https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            json=payload,
-            timeout=10,
-        )
-        if not response.ok:
-            app.logger.warning(
-                "Resend rejected OTP email: HTTP %s - %s",
-                response.status_code,
-                response.text[:500],
-            )
-            return False, "OTP was generated, but Resend rejected the email. Check the Render logs."
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as smtp:
+            smtp.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD.replace(" ", ""))
+            smtp.send_message(message)
         return True, "OTP emailed successfully."
-    except requests.RequestException as exc:
-        app.logger.warning("Resend email request failed: %s", exc)
-        return False, "OTP was generated, but Resend could not be reached. Check the Render logs."
+    except (OSError, smtplib.SMTPException) as exc:
+        app.logger.warning("Gmail SMTP email failed: %s", exc)
+        return False, "OTP was generated, but Gmail could not send the email. Check the Render logs."
 
 
 # ---------------------------------------------------------------------------

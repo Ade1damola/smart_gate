@@ -194,6 +194,12 @@ def find_staff(staff_id):
     return staff.to_dict() if staff else None
 
 
+def fingerprint_ids(template_field):
+    """A staff member can have more than one enrolled fingerprint - they're
+    stored as a comma-separated list in the same column."""
+    return [template_id for template_id in (template_field or "").split(",") if template_id]
+
+
 def find_vehicle_by_plate(plate):
     plate = plate.strip().upper()
     for vehicle in Vehicle.query.all():
@@ -738,7 +744,7 @@ def verify_fingerprint():
         return jsonify({"success": False, "message": "staff_id and fingerprint_template_id are required"}), 400
 
     staff = find_staff(staff_id)
-    success = bool(staff) and staff.get("fingerprint_template_id") == template_id
+    success = bool(staff) and template_id in fingerprint_ids(staff.get("fingerprint_template_id"))
     message = "Fingerprint verified successfully" if success else "Fingerprint does not match staff record"
 
     log_event(staff_id, plate_number or (staff["plate_number"] if staff else ""), "fingerprint", event_type,
@@ -795,7 +801,10 @@ def update_staff_fingerprint(staff_id):
     if not staff_row:
         return jsonify({"success": False, "message": "Unknown staff_id"}), 404
 
-    staff_row.fingerprint_template_id = template_id
+    existing_ids = fingerprint_ids(staff_row.fingerprint_template_id)
+    if template_id not in existing_ids:
+        existing_ids.append(template_id)
+    staff_row.fingerprint_template_id = ",".join(existing_ids)
     db.session.commit()
 
     return jsonify({"success": True, "message": "Fingerprint template recorded"})

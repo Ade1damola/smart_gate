@@ -36,6 +36,8 @@
 #include <Adafruit_Fingerprint.h> 
 #include <Keypad.h>
 #include <ESP32Servo.h>
+#include <Preferences.h>
+#include <time.h>
 
 
 // ============================================================
@@ -101,6 +103,8 @@ const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
 #define GATE_OPEN_DURATION_MS    5000    // Keep gate open for 5 seconds
 #define BUZZER_BEEP_MS           300     // Single beep duration
 #define OTP_LENGTH               6       // 6-digit OTP
+#define TEMP_FINGERPRINT_ID      127     // Reserved R307 slot for temporary access
+#define TEMP_FINGERPRINT_HOURS   48
 
 
 // ============================================================
@@ -131,6 +135,7 @@ Servo gateServo;
 
 // Local web server (receives alerts from Raspberry Pi)
 WebServer localServer(80);
+Preferences temporaryFingerprintStore;
 
 
 // ============================================================
@@ -144,6 +149,10 @@ String pendingPlate = "";
 int pendingFingerprintId = -1;
 String pendingEventType = "EXIT";
 unsigned long verificationStartTime = 0;
+bool temporaryFingerprintActive = false;
+time_t temporaryFingerprintExpiry = 0;
+String temporaryFingerprintStaffId = "";
+String temporaryFingerprintPlate = "";
 
 
 // ============================================================
@@ -267,12 +276,119 @@ void openGate() {
 // FINGERPRINT FUNCTIONS
 // ============================================================
 
+void logEventToServer(String staffId, String plate, String method,
+                      String eventType, String status, String details);
+
+bool clockIsValid() {
+    return time(nullptr) > 1700000000;
+}
+
+void clearTemporaryFingerprint(const String& reason) {
+    if (temporaryFingerprintActive) {
+        uint8_t result = finger.deleteModel(TEMP_FINGERPRINT_ID);
+        Serial.print("[FP] Temporary template deleted, result: ");
+        Serial.println(result);
+    }
+
+    temporaryFingerprintStore.clear();
+    temporaryFingerprintActive = false;
+    temporaryFingerprintExpiry = 0;
+    temporaryFingerprintStaffId = "";
+    temporaryFingerprintPlate = "";
+    Serial.print("[FP] Temporary fingerprint cleared: ");
+    Serial.println(reason);
+}
+
+void loadTemporaryFingerprint() {
+    temporaryFingerprintExpiry = temporaryFingerprintStore.getULong64("expiry", 0);
+    temporaryFingerprintStaffId = temporaryFingerprintStore.getString("staff", "");
+    temporaryFingerprintPlate = temporaryFingerprintStore.getString("plate", "");
+    temporaryFingerprintActive = temporaryFingerprintExpiry > 0 &&
+                                 temporaryFingerprintStaffId.length() > 0 &&
+                                 temporaryFingerprintPlate.length() > 0;
+
+    if (temporaryFingerprintActive && clockIsValid() &&
+        time(nullptr) >= temporaryFingerprintExpiry) {
+        clearTemporaryFingerprint("expired at startup");
+    }
+}
+
+void expireTemporaryFingerprintIfNeeded() {
+    if (!temporaryFingerprintActive || !clockIsValid()) {
+        return;
+    }
+
+    if (time(nullptr) >= temporaryFingerprintExpiry) {
+        clearTemporaryFingerprint("48-hour expiry");
+    }
+}
+
+bool enrollTemporaryFingerprint() {
+    if (!clockIsValid()) {
+        Serial.println("[FP] Cannot save temporary fingerprint: clock not synchronized.");
+        displayMessage("FP NOT SAVED", "Time unavailable", "Use OTP again");
+        return false;
+    }
+
+    if (temporaryFingerprintActive) {
+        clearTemporaryFingerprint("replaced by new OTP approval");
+    }
+
+    Serial.print("[FP] Enrolling temporary fingerprint at ID ");
+    Serial.println(TEMP_FINGERPRINT_ID);
+    displayMessage("SAVE FINGERPRINT", "Place finger on", "scanner...");
+
+    int p = -1;
+    while (p != FINGERPRINT_OK) {
+        p = finger.getImage();
+        delay(100);
+    }
+    p = finger.image2Tz(1);
+    if (p != FINGERPRINT_OK) return false;
+
+    displayMessage("SAVE FINGERPRINT", "Remove finger", "");
+    delay(1500);
+    while (finger.getImage() != FINGERPRINT_NOFINGER) {
+        delay(100);
+    }
+
+    displayMessage("SAVE FINGERPRINT", "Place same finger", "again...");
+    p = -1;
+    while (p != FINGERPRINT_OK) {
+        p = finger.getImage();
+        delay(100);
+    }
+    p = finger.image2Tz(2);
+    if (p != FINGERPRINT_OK) return false;
+    p = finger.createModel();
+    if (p != FINGERPRINT_OK) return false;
+    p = finger.storeModel(TEMP_FINGERPRINT_ID);
+    if (p != FINGERPRINT_OK) return false;
+
+    temporaryFingerprintExpiry = time(nullptr) + (TEMP_FINGERPRINT_HOURS * 3600);
+    temporaryFingerprintStaffId = pendingStaffId;
+    temporaryFingerprintPlate = pendingPlate;
+    temporaryFingerprintStore.putULong64("expiry", temporaryFingerprintExpiry);
+    temporaryFingerprintStore.putString("staff", temporaryFingerprintStaffId);
+    temporaryFingerprintStore.putString("plate", temporaryFingerprintPlate);
+    temporaryFingerprintActive = true;
+
+    Serial.print("[FP] Temporary fingerprint saved until epoch ");
+    Serial.println((unsigned long)temporaryFingerprintExpiry);
+    logEventToServer(pendingStaffId, pendingPlate, "TEMP_FINGERPRINT",
+                     pendingEventType, "SUCCESS", "Temporary fingerprint enrolled for 48 hours");
+    displayMessage("FINGERPRINT SAVED", "Valid for 48 hours", "Opening gate...");
+    beepSuccess();
+    return true;
+}
+
 int scanFingerprint() {
     /*
      * Attempts to read and match a fingerprint.
      * Returns the matched template ID if found, or -1 if no match / no finger.
      * Non-blocking: returns immediately if no finger is on the sensor.
      */
+    expireTemporaryFingerprintIfNeeded();
     uint8_t p = finger.getImage();
     if (p != FINGERPRINT_OK) {
         return -1;  // No finger detected or error
@@ -779,6 +895,20 @@ void processVerification() {
         Serial.print("[VERIFY] Fingerprint matched ID: ");
         Serial.println(fpResult);
 
+        if (temporaryFingerprintActive && fpResult == TEMP_FINGERPRINT_ID &&
+            pendingStaffId == temporaryFingerprintStaffId &&
+            pendingPlate == temporaryFingerprintPlate) {
+            Serial.println("[VERIFY] Temporary fingerprint recognized.");
+            logEventToServer(pendingStaffId, pendingPlate, "TEMP_FINGERPRINT",
+                             pendingEventType, "SUCCESS", "Temporary fingerprint used within 48-hour window");
+            displayMessage("TEMP FP VERIFIED", "Access granted", "Opening gate...");
+            openGate();
+            promptShown = false;
+            awaitingVerification = false;
+            showIdleScreen();
+            return;
+        }
+
         if (fpResult == pendingFingerprintId) {
             // It's the owner!
             Serial.println("[VERIFY] Owner verified by fingerprint.");
@@ -874,7 +1004,8 @@ void processVerification() {
 
             if (serverOk) {
                 Serial.println("[VERIFY] OTP verified! Non-owner access granted.");
-                displayMessage("OTP VERIFIED", "Access granted", "Opening gate...");
+                displayMessage("OTP VERIFIED", "Scan finger to save", "48 hours");
+                enrollTemporaryFingerprint();
                 delay(500);
                 openGate();
             } else {
@@ -917,6 +1048,8 @@ void setup() {
     Serial.println("  SMART GATE SYSTEM - Starting up...");
     Serial.println("========================================\n");
 
+    temporaryFingerprintStore.begin("temporary_fp", false);
+
     // --- Initialize buzzer ---
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(BUZZER_PIN, LOW);
@@ -942,6 +1075,7 @@ void setup() {
         finger.getTemplateCount();
         Serial.print(finger.templateCount);
         Serial.println(" templates stored)");
+        loadTemporaryFingerprint();
     } else {
         Serial.println("[INIT] Fingerprint sensor: NOT FOUND!");
         Serial.println("       Check wiring: TX→GPIO18, RX→GPIO17");
@@ -983,6 +1117,15 @@ void setup() {
         } else {
             Serial.println("[MDNS] Failed to start!");
         }
+
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+        Serial.print("[TIME] Synchronizing clock");
+        for (int timeAttempt = 0; timeAttempt < 20 && !clockIsValid(); timeAttempt++) {
+            delay(500);
+            Serial.print(".");
+        }
+        Serial.println(clockIsValid() ? " OK" : " FAILED");
+        expireTemporaryFingerprintIfNeeded();
 
         displayMessage("WIFI CONNECTED",
                        WiFi.localIP().toString(),

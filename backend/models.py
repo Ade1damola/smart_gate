@@ -19,6 +19,7 @@ class Staff(db.Model):
     fingerprint_template_id = db.Column(db.String(32), nullable=True, default="")
     plate_number = db.Column(db.String(32), nullable=True, default="")
     phone_number = db.Column(db.String(32), nullable=False, default="")
+    email = db.Column(db.String(255), nullable=True, default="")
 
     def to_dict(self):
         return {
@@ -28,6 +29,7 @@ class Staff(db.Model):
             "fingerprint_template_id": self.fingerprint_template_id or "",
             "plate_number": self.plate_number or "",
             "phone_number": self.phone_number or "",
+            "email": self.email or "",
         }
 
 

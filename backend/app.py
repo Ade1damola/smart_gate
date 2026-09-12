@@ -40,6 +40,8 @@ DEVICE_API_KEY = os.environ.get("DEVICE_API_KEY", "")
 # reset code is printed to the console instead of actually being texted.
 TERMII_API_KEY = os.environ.get("TERMII_API_KEY", "")
 TERMII_SENDER_ID = os.environ.get("TERMII_SENDER_ID", "")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "Verigate <onboarding@resend.dev>")
 
 # Default password assigned to every newly-added staff member. They're
 # expected to use the "forgot password" OTP flow to set their own password.
@@ -150,6 +152,23 @@ def seed_data():
     db.session.commit()
 
 
+def ensure_schema():
+    """Add columns introduced after the first local database was created."""
+    inspector = db.inspect(db.engine)
+    staff_columns = {column["name"] for column in inspector.get_columns("staff")}
+    if "email" not in staff_columns:
+        with db.engine.begin() as connection:
+            connection.exec_driver_sql("ALTER TABLE staff ADD COLUMN email VARCHAR(255)")
+
+
+def ensure_staff_email():
+    """Attach the configured email to STAFF003 without creating fake details."""
+    staff = db.session.get(Staff, "STAFF003")
+    if staff and not staff.email:
+        staff.email = "adedamola.adenuga04@gmail.com"
+        db.session.commit()
+
+
 def parse_time(value):
     return datetime.fromisoformat(value)
 
@@ -220,6 +239,55 @@ def send_reset_sms(phone_number, code):
         # Don't fail the whole request just because the SMS gateway is down -
         # the OTP is still valid and recoverable (e.g. staff calls the admin).
         print("[SMS ERROR] Could not send reset code to {phone}: {exc}".format(phone=phone_number, exc=exc))
+
+
+def send_otp_email(staff, code, expiry):
+    """Send a gate OTP through Resend when email delivery is configured."""
+    email = (staff.get("email") or "").strip()
+    if not email:
+        return False, "No email address is saved for this staff member."
+    if not RESEND_API_KEY:
+        print(f"[SIMULATED EMAIL to {email}] OTP {code} expires {expiry}")
+        return False, "Resend is not configured; OTP was generated locally."
+
+    expiry_text = expiry.strftime("%I:%M %p, %d %B %Y")
+    payload = {
+        "from": RESEND_FROM_EMAIL,
+        "to": [email],
+        "subject": "Your Verigate OTP Has Been Generated",
+        "text": (
+            f"Hi {staff['name']},\n\n"
+            f"You've successfully generated a One-Time Password for your vehicle ({staff['plate_number']}).\n\n"
+            f"OTP Code: {code}\n\n"
+            f"Valid until: {expiry_text}\n\n"
+            "Share this code with the person driving your car. They will enter it on the keypad at the gate to gain access. "
+            "This code is single-use and will expire automatically after the time limit you selected.\n\n"
+            "Didn't request this? If you did not generate this OTP, please log in to your Verigate dashboard immediately and revoke it, or contact the security office.\n\n"
+            "Verigate Smart Gate Access System"
+        ),
+        "html": (
+            f"<p>Hi <strong>{staff['name']}</strong>,</p>"
+            f"<p>You've successfully generated a One-Time Password for your vehicle (<strong>{staff['plate_number']}</strong>).</p>"
+            f"<p><strong>OTP Code:</strong></p><h2>{code}</h2>"
+            f"<p><strong>Valid until:</strong> {expiry_text}</p>"
+            "<p>Share this code with the person driving your car. They will enter it on the keypad at the gate to gain access. "
+            "This code is single-use and will expire automatically after the time limit you selected.</p>"
+            "<p><strong>Didn't request this?</strong> If you did not generate this OTP, please log in to your Verigate dashboard immediately and revoke it, or contact the security office.</p>"
+            "<p>Verigate Smart Gate Access System</p>"
+        ),
+    }
+    try:
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=10,
+        )
+        response.raise_for_status()
+        return True, "OTP emailed successfully."
+    except requests.RequestException as exc:
+        app.logger.warning("Resend email failed: %s", exc)
+        return False, "OTP was generated, but the email could not be sent."
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +478,9 @@ def admin_add_staff():
     staff_id = (data.get("staff_id") or "").strip()
     name = (data.get("name") or "").strip()
     phone_number = (data.get("phone_number") or "").strip()
+    email = (data.get("email") or "").strip()
+    if staff_id == "STAFF003" and not email:
+        email = "adedamola.adenuga04@gmail.com"
     plate_number = (data.get("plate_number") or "").strip().upper()
     fingerprint_template_id = (data.get("fingerprint_template_id") or "").strip()
 
@@ -426,6 +497,7 @@ def admin_add_staff():
         fingerprint_template_id=fingerprint_template_id,
         plate_number=plate_number,
         phone_number=phone_number,
+        email=email,
     ))
 
     if plate_number:
@@ -519,11 +591,15 @@ def generate_otp():
     ))
     db.session.commit()
 
+    email_sent, email_message = send_otp_email(staff, code, expiry)
+
     return jsonify({
         "success": True,
         "otp_code": code,
         "created_time": created.isoformat(timespec="seconds"),
         "expiry_time": expiry.isoformat(timespec="seconds"),
+        "email_sent": email_sent,
+        "email_message": email_message,
     })
 
 
@@ -741,7 +817,9 @@ def serve_frontend(filename):
 
 with app.app_context():
     db.create_all()
+    ensure_schema()
     seed_data()
+    ensure_staff_email()
 
 
 if __name__ == "__main__":

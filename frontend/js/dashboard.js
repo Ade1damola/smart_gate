@@ -9,6 +9,7 @@
   const otpResult = document.getElementById("otp-result");
   const otpCodeEl = document.getElementById("otp-code");
   const otpExpiryEl = document.getElementById("otp-expiry");
+  const otpEmailStatusEl = document.getElementById("otp-email-status");
   const otpErrorEl = document.getElementById("otp-error");
   const activeOtpList = document.getElementById("active-otp-list");
   const recentActivityList = document.getElementById("recent-activity-list");
@@ -121,6 +122,7 @@
     if (ok && data.success) {
       otpCodeEl.textContent = data.otp_code;
       otpExpiryEl.textContent = "Expires " + formatDateTime(data.expiry_time);
+      otpEmailStatusEl.textContent = data.email_message || "";
       otpResult.hidden = false;
       loadDashboard();
     } else {

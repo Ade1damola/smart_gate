@@ -32,6 +32,7 @@
       staff_id: document.getElementById("staff_id").value.trim(),
       name: document.getElementById("name").value.trim(),
       phone_number: document.getElementById("phone_number").value.trim(),
+      email: document.getElementById("email").value.trim(),
       plate_number: document.getElementById("plate_number").value.trim(),
       fingerprint_template_id: document.getElementById("fingerprint_template_id").value.trim(),
     };

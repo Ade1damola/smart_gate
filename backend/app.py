@@ -283,11 +283,17 @@ def send_otp_email(staff, code, expiry):
             json=payload,
             timeout=10,
         )
-        response.raise_for_status()
+        if not response.ok:
+            app.logger.warning(
+                "Resend rejected OTP email: HTTP %s - %s",
+                response.status_code,
+                response.text[:500],
+            )
+            return False, "OTP was generated, but Resend rejected the email. Check the Render logs."
         return True, "OTP emailed successfully."
     except requests.RequestException as exc:
-        app.logger.warning("Resend email failed: %s", exc)
-        return False, "OTP was generated, but the email could not be sent."
+        app.logger.warning("Resend email request failed: %s", exc)
+        return False, "OTP was generated, but Resend could not be reached. Check the Render logs."
 
 
 # ---------------------------------------------------------------------------

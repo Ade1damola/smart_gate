@@ -122,7 +122,7 @@ def seed_data():
         Vehicle(vehicle_id="VEH002", staff_id="STAFF002", plate_number="BDG-889HS"),
     ])
 
-    now = datetime.now()
+    now = now_wat()
     db.session.add_all([
         Log(
             staff_id="STAFF001",
@@ -173,8 +173,16 @@ def parse_time(value):
     return datetime.fromisoformat(value)
 
 
+# Nigeria (WAT) is a fixed UTC+1 offset with no daylight saving, so we
+# compute it from UTC rather than trusting the server's local clock -
+# Render's containers run in UTC, which made timestamps and OTP expiry
+# read an hour behind actual Nigerian time.
+def now_wat():
+    return datetime.utcnow() + timedelta(hours=1)
+
+
 def now_iso():
-    return datetime.now().isoformat(timespec="seconds")
+    return now_wat().isoformat(timespec="seconds")
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +400,7 @@ def request_password_reset():
 
     staff_row = db.session.get(Staff, staff_id) if staff_id else None
     if staff_row:
-        created = datetime.now()
+        created = now_wat()
         expiry = created + timedelta(minutes=RESET_OTP_VALID_MINUTES)
         code = "".join(random.choices(string.digits, k=6))
 
@@ -434,7 +442,7 @@ def reset_password():
     if not staff_row:
         return jsonify({"success": False, "message": "Invalid or expired reset code"}), 400
 
-    now = datetime.now()
+    now = now_wat()
     matched = (
         PasswordResetOtp.query
         .filter_by(otp_code=code, staff_id=staff_id)
@@ -532,7 +540,7 @@ def dashboard():
     if error:
         return error
 
-    now = datetime.now()
+    now = now_wat()
     active_otps = [
         otp.to_dict() for otp in Otp.query.filter_by(staff_id=staff["staff_id"], used=False).all()
         if parse_time(otp.expiry_time) > now
@@ -570,7 +578,7 @@ def generate_otp():
     if time_limit <= 0 or time_limit > 1440:
         return jsonify({"success": False, "message": "time_limit must be between 1 and 1440 minutes"}), 400
 
-    created = datetime.now()
+    created = now_wat()
     expiry = created + timedelta(minutes=time_limit)
     code = "".join(random.choices(string.digits, k=6))
 
@@ -680,14 +688,14 @@ def verify_otp():
     code = (data.get("otp_code") or "").strip()
     staff_id = (data.get("staff_id") or "").strip()
     plate_number = (data.get("plate_number") or "").strip()
-    event_type = (data.get("event_type") or "entry").strip().lower()
+    event_type = (data.get("event_type") or "exit").strip().lower()
     if event_type not in ("entry", "exit"):
-        event_type = "entry"
+        event_type = "exit"
 
     if not code or not staff_id:
         return jsonify({"success": False, "message": "otp_code and staff_id are required"}), 400
 
-    now = datetime.now()
+    now = now_wat()
     matched = Otp.query.filter_by(otp_code=code, staff_id=staff_id).first()
 
     success = False

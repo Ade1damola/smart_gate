@@ -44,6 +44,7 @@ TERMII_API_KEY = os.environ.get("TERMII_API_KEY", "")
 TERMII_SENDER_ID = os.environ.get("TERMII_SENDER_ID", "")
 GMAIL_EMAIL = os.environ.get("GMAIL_EMAIL", "")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+GMAIL_SMTP_PORT = int(os.environ.get("GMAIL_SMTP_PORT", "587"))
 
 # Default password assigned to every newly-added staff member. They're
 # expected to use the "forgot password" OTP flow to set their own password.
@@ -268,7 +269,10 @@ def send_otp_email(staff, code, expiry):
         "Verigate Smart Gate Access System"
     )
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15) as smtp:
+        with smtplib.SMTP("smtp.gmail.com", GMAIL_SMTP_PORT, timeout=15) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.ehlo()
             smtp.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD.replace(" ", ""))
             smtp.send_message(message)
         return True, "OTP emailed successfully."

@@ -17,6 +17,7 @@ backend/data/*.json.bak
 
 backend/set_staff_name.py
 backend/set_staff_password.py
+backend/set_staff_email.py
 backend/rotate_admin_password.py
 # Real Wi-Fi/API credentials for the ESP32 sketch - copy secrets.h.example
 # to secrets.h and fill in real values, never commit secrets.h itself

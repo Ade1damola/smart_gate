@@ -9,10 +9,8 @@ gate hardware.
 import os
 import random
 import secrets
-import smtplib
 import string
 from datetime import datetime, timedelta
-from email.message import EmailMessage
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
@@ -42,9 +40,8 @@ DEVICE_API_KEY = os.environ.get("DEVICE_API_KEY", "")
 # reset code is printed to the console instead of actually being texted.
 TERMII_API_KEY = os.environ.get("TERMII_API_KEY", "")
 TERMII_SENDER_ID = os.environ.get("TERMII_SENDER_ID", "")
-GMAIL_EMAIL = os.environ.get("GMAIL_EMAIL", "")
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
-GMAIL_SMTP_PORT = int(os.environ.get("GMAIL_SMTP_PORT", "587"))
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 
 # Default password assigned to every newly-added staff member. They're
 # expected to use the "forgot password" OTP flow to set their own password.
@@ -168,7 +165,7 @@ def ensure_staff_email():
     """Attach the configured email to STAFF003 without creating fake details."""
     staff = db.session.get(Staff, "STAFF003")
     if staff and not staff.email:
-        staff.email = "adedamola.adenuga04@gmail.com"
+        staff.email = "adenugaade18@gmail.com"
         db.session.commit()
 
 
@@ -245,20 +242,16 @@ def send_reset_sms(phone_number, code):
 
 
 def send_otp_email(staff, code, expiry):
-    """Send a gate OTP through Gmail SMTP when email delivery is configured."""
+    """Send a gate OTP through the Resend HTTP API when email delivery is configured."""
     email = (staff.get("email") or "").strip()
     if not email:
         return False, "No email address is saved for this staff member."
-    if not GMAIL_EMAIL or not GMAIL_APP_PASSWORD:
+    if not RESEND_API_KEY:
         print(f"[SIMULATED EMAIL to {email}] OTP {code} expires {expiry}")
-        return False, "Gmail SMTP is not configured; OTP was generated locally."
+        return False, "Resend is not configured; OTP was generated locally."
 
     expiry_text = expiry.strftime("%I:%M %p, %d %B %Y")
-    message = EmailMessage()
-    message["From"] = GMAIL_EMAIL
-    message["To"] = email
-    message["Subject"] = "Your Verigate OTP Has Been Generated"
-    message.set_content(
+    text_body = (
         f"Hi {staff['name']},\n\n"
         f"You've successfully generated a One-Time Password for your vehicle ({staff['plate_number']}).\n\n"
         f"OTP Code: {code}\n\n"
@@ -269,16 +262,24 @@ def send_otp_email(staff, code, expiry):
         "Verigate Smart Gate Access System"
     )
     try:
-        with smtplib.SMTP("smtp.gmail.com", GMAIL_SMTP_PORT, timeout=15) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.ehlo()
-            smtp.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD.replace(" ", ""))
-            smtp.send_message(message)
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+            json={
+                "from": RESEND_FROM_EMAIL,
+                "to": [email],
+                "subject": "Your Verigate OTP Has Been Generated",
+                "text": text_body,
+            },
+            timeout=15,
+        )
+        if response.status_code >= 400:
+            app.logger.warning("Resend email failed: %s %s", response.status_code, response.text)
+            return False, "OTP was generated, but Resend could not send the email. Check the Render logs."
         return True, "OTP emailed successfully."
-    except (OSError, smtplib.SMTPException) as exc:
-        app.logger.warning("Gmail SMTP email failed: %s", exc)
-        return False, "OTP was generated, but Gmail could not send the email. Check the Render logs."
+    except requests.RequestException as exc:
+        app.logger.warning("Resend email failed: %s", exc)
+        return False, "OTP was generated, but Resend could not send the email. Check the Render logs."
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +472,7 @@ def admin_add_staff():
     phone_number = (data.get("phone_number") or "").strip()
     email = (data.get("email") or "").strip()
     if staff_id == "STAFF003" and not email:
-        email = "adedamola.adenuga04@gmail.com"
+        email = "adenugaade18@gmail.com"
     plate_number = (data.get("plate_number") or "").strip().upper()
     fingerprint_template_id = (data.get("fingerprint_template_id") or "").strip()
 

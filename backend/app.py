@@ -26,10 +26,13 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 DEFAULT_DATABASE_URL = "sqlite:///" + os.path.join(DATA_DIR, "smart_gate.db")
 DATABASE_URL = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL)
-# Render (and most Postgres hosts) hand out "postgres://" URLs, but SQLAlchemy
-# 1.4+ requires the "postgresql://" scheme.
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# Render (and most Postgres hosts) hand out "postgres://" / "postgresql://"
+# URLs; pin the psycopg (v3) driver explicitly so the choice doesn't depend on
+# SQLAlchemy's default dialect driver, which changed between versions.
+for prefix in ("postgres://", "postgresql://"):
+    if DATABASE_URL.startswith(prefix):
+        DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len(prefix):]
+        break
 
 # Shared secret the ESP32 and Raspberry Pi must send as the X-Device-Key
 # header on device-facing routes. Left unset locally so laptop testing

@@ -221,8 +221,8 @@ select {
 }
 
 .badge-exit {
-  background: #fef3c7;
-  color: #92400e;
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .badge-success {
@@ -260,4 +260,42 @@ select {
   .otp-code {
     font-size: 2rem;
   }
+}
+
+.page.anpr-page {
+  max-width: 640px;
+}
+
+.anpr-card {
+  width: 100%;
+}
+
+.anpr-preview-section {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 16px;
+  align-items: flex-start;
+}
+
+.anpr-image-wrap {
+  flex: 1 1 240px;
+  min-height: 160px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #e6ebf0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.anpr-image-wrap img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.anpr-result {
+  flex: 1 1 200px;
+  margin-top: 0;
 }

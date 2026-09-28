@@ -19,7 +19,7 @@
  * Wiring (ESP32-S3-N16R8):
  *   R307 Fingerprint: TX→GPIO18, RX→GPIO17, VCC→5V, GND→GND
  *   4x4 Keypad:       Rows→GPIO 4,5,6,7  Cols→GPIO 10,11,12,13
- *   OLED SSD1306:      SDA→GPIO8, SCL→GPIO9, VCC→3.3V, GND→GND
+ *   OLED SSD1327 (1.12"): SDA→GPIO8, SCL→GPIO9, VCC→3.3V, GND→GND
  *   Buzzer:            +→GPIO47, -→GND
  *   Servo SG90:        Signal→GPIO15, VCC→5V, GND→GND
  * ============================================================
@@ -32,7 +32,7 @@
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <Adafruit_SSD1327.h>
 #include <Adafruit_Fingerprint.h> 
 #include <Keypad.h>
 #include <ESP32Servo.h>
@@ -81,9 +81,9 @@ const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
 // OLED display (I2C)
 #define OLED_SDA    8
 #define OLED_SCL    9
-#define OLED_WIDTH  128
-#define OLED_HEIGHT 32   // 0.91" panels are 128x32, not 128x64
-#define OLED_ADDR   0x3C
+#define OLED_WIDTH  96
+#define OLED_HEIGHT 96   // Grove OLED 1.12" (SSD1327) panels are 96x96
+#define OLED_ADDR   0x3C // Grove OLED 1.12" fixed I2C address
 
 // Buzzer
 #define BUZZER_PIN  47
@@ -103,8 +103,8 @@ const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
 #define GATE_OPEN_DURATION_MS    5000    // Keep gate open for 5 seconds
 #define BUZZER_BEEP_MS           300     // Single beep duration
 #define OTP_LENGTH               6       // 6-digit OTP
-#define TEMP_FINGERPRINT_ID      127     // Reserved R307 slot for temporary access
-#define TEMP_FINGERPRINT_HOURS   48
+// #define TEMP_FINGERPRINT_ID      127     // Reserved R307 slot for temporary access
+// #define TEMP_FINGERPRINT_HOURS   48
 
 
 // ============================================================
@@ -112,7 +112,7 @@ const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
 // ============================================================
 
 // OLED display
-Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
+Adafruit_SSD1327 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 
 // Fingerprint sensor on Serial1
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial1);
@@ -135,7 +135,7 @@ Servo gateServo;
 
 // Local web server (receives alerts from Raspberry Pi)
 WebServer localServer(80);
-Preferences temporaryFingerprintStore;
+// Preferences temporaryFingerprintStore;
 
 
 // ============================================================
@@ -149,10 +149,10 @@ String pendingPlate = "";
 int pendingFingerprintId = -1;
 String pendingEventType = "EXIT";
 unsigned long verificationStartTime = 0;
-bool temporaryFingerprintActive = false;
-time_t temporaryFingerprintExpiry = 0;
-String temporaryFingerprintStaffId = "";
-String temporaryFingerprintPlate = "";
+// bool temporaryFingerprintActive = false;
+// time_t temporaryFingerprintExpiry = 0;
+// String temporaryFingerprintStaffId = "";
+// String temporaryFingerprintPlate = "";
 
 
 // ============================================================
@@ -161,7 +161,7 @@ String temporaryFingerprintPlate = "";
 
 void displayMessage(String line1, String line2, String line3) {
     display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
+    display.setTextColor(SSD1327_WHITE);
 
     // Line 1: large text
     display.setTextSize(1);
@@ -181,7 +181,7 @@ void displayMessage(String line1, String line2, String line3) {
 
 void displayLargeOTP(String otp, int digits_entered) {
     display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
+    display.setTextColor(SSD1327_WHITE);
 
     display.setTextSize(1);
     display.setCursor(0, 0);
@@ -283,6 +283,7 @@ bool clockIsValid() {
     return time(nullptr) > 1700000000;
 }
 
+/* --- Temporary fingerprint feature (disabled) ---
 void clearTemporaryFingerprint(const String& reason) {
     if (temporaryFingerprintActive) {
         uint8_t result = finger.deleteModel(TEMP_FINGERPRINT_ID);
@@ -381,6 +382,7 @@ bool enrollTemporaryFingerprint() {
     beepSuccess();
     return true;
 }
+--- end temporary fingerprint feature --- */
 
 int scanFingerprint() {
     /*
@@ -388,7 +390,7 @@ int scanFingerprint() {
      * Returns the matched template ID if found, or -1 if no match / no finger.
      * Non-blocking: returns immediately if no finger is on the sensor.
      */
-    expireTemporaryFingerprintIfNeeded();
+    // expireTemporaryFingerprintIfNeeded();  // temp fingerprint feature disabled
     uint8_t p = finger.getImage();
     if (p != FINGERPRINT_OK) {
         return -1;  // No finger detected or error
@@ -895,6 +897,7 @@ void processVerification() {
         Serial.print("[VERIFY] Fingerprint matched ID: ");
         Serial.println(fpResult);
 
+        /* --- Temporary fingerprint feature (disabled) ---
         if (temporaryFingerprintActive && fpResult == TEMP_FINGERPRINT_ID &&
             pendingStaffId == temporaryFingerprintStaffId &&
             pendingPlate == temporaryFingerprintPlate) {
@@ -908,6 +911,7 @@ void processVerification() {
             showIdleScreen();
             return;
         }
+        --- end temporary fingerprint feature --- */
 
         if (fpResult == pendingFingerprintId) {
             // It's the owner!
@@ -1004,8 +1008,8 @@ void processVerification() {
 
             if (serverOk) {
                 Serial.println("[VERIFY] OTP verified! Non-owner access granted.");
-                displayMessage("OTP VERIFIED", "Scan finger to save", "48 hours");
-                enrollTemporaryFingerprint();
+                displayMessage("OTP VERIFIED", "Opening gate...", "");
+                // enrollTemporaryFingerprint();  // temp fingerprint feature disabled
                 delay(500);
                 openGate();
             } else {
@@ -1048,7 +1052,7 @@ void setup() {
     Serial.println("  SMART GATE SYSTEM - Starting up...");
     Serial.println("========================================\n");
 
-    temporaryFingerprintStore.begin("temporary_fp", false);
+    // temporaryFingerprintStore.begin("temporary_fp", false);  // temp fingerprint feature disabled
 
     // --- Initialize buzzer ---
     pinMode(BUZZER_PIN, OUTPUT);
@@ -1057,29 +1061,13 @@ void setup() {
 
     // --- Initialize OLED display ---
     Wire.begin(OLED_SDA, OLED_SCL);
-    if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    if (!display.begin(OLED_ADDR)) {
         Serial.println("[INIT] OLED: FAILED!");
         // Continue anyway — system can work without display
     } else {
         Serial.println("[INIT] OLED: OK");
     }
     displayMessage("SMART GATE", "Starting up...", "");
-
-    // --- Initialize fingerprint sensor ---
-    displayMessage("SMART GATE", "Checking", "fingerprint...");
-    Serial1.begin(57600, SERIAL_8N1, FP_RX_PIN, FP_TX_PIN);
-    finger.begin(57600);
-
-    if (finger.verifyPassword()) {
-        Serial.print("[INIT] Fingerprint sensor: OK (");
-        finger.getTemplateCount();
-        Serial.print(finger.templateCount);
-        Serial.println(" templates stored)");
-        loadTemporaryFingerprint();
-    } else {
-        Serial.println("[INIT] Fingerprint sensor: NOT FOUND!");
-        Serial.println("       Check wiring: TX→GPIO18, RX→GPIO17");
-    }
 
     // --- Initialize servo ---
     gateServo.attach(SERVO_PIN);
@@ -1125,7 +1113,7 @@ void setup() {
             Serial.print(".");
         }
         Serial.println(clockIsValid() ? " OK" : " FAILED");
-        expireTemporaryFingerprintIfNeeded();
+        // expireTemporaryFingerprintIfNeeded();  // temp fingerprint feature disabled
 
         displayMessage("WIFI CONNECTED",
                        WiFi.localIP().toString(),
@@ -1134,6 +1122,23 @@ void setup() {
         Serial.println("\n[WIFI] CONNECTION FAILED!");
         Serial.println("       System will work offline (no server verification)");
         displayMessage("WIFI FAILED", "Offline mode", "Check credentials");
+    }
+
+    // --- Initialize fingerprint sensor (after Wi-Fi so the system is up
+    //     and serving requests while this still runs underneath) ---
+    displayMessage("SMART GATE", "Checking", "fingerprint...");
+    Serial1.begin(57600, SERIAL_8N1, FP_RX_PIN, FP_TX_PIN);
+    finger.begin(57600);
+
+    if (finger.verifyPassword()) {
+        Serial.print("[INIT] Fingerprint sensor: OK (");
+        finger.getTemplateCount();
+        Serial.print(finger.templateCount);
+        Serial.println(" templates stored)");
+        // loadTemporaryFingerprint();  // temp fingerprint feature disabled
+    } else {
+        Serial.println("[INIT] Fingerprint sensor: NOT FOUND!");
+        Serial.println("       Check wiring: TX→GPIO18, RX→GPIO17");
     }
 
     // --- Set up local web server routes ---

@@ -37,6 +37,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
         Live monitor &#8599;
       </a>
+      <!-- TEMPORARY: testing guide, remove before going live -->
+      <a href="#guide" class="nav-link" data-nav="guide">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14z"/><path d="M6.5 17A2.5 2.5 0 0 0 4 19.5 2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>
+        Testing guide
+      </a>
       <div class="nav-spacer"></div>
       <div class="sidebar-footer">
         <span id="admin-name">--</span><br />
@@ -273,6 +278,216 @@
           <input type="search" id="detection-search" placeholder="Search plate..." style="width: 240px;" />
         </div>
         <div class="detection-grid" id="detection-grid"><p class="empty">Loading...</p></div>
+      </section>
+
+      <!-- ============ TESTING GUIDE (TEMPORARY - remove before going live) ============ -->
+      <section data-view="guide" hidden>
+        <div class="view-head">
+          <div>
+            <h1>Testing guide</h1>
+            <p class="muted">How to try every part of the system, in order. Temporary page &mdash; remove before going live.</p>
+          </div>
+        </div>
+
+        <div class="doc">
+          <nav class="panel doc-toc">
+            <strong>On this page</strong>
+            <ol>
+              <li><a href="#guide" data-jump="g-overview">How the pieces fit</a></li>
+              <li><a href="#guide" data-jump="g-server">Run the server locally</a></li>
+              <li><a href="#guide" data-jump="g-register">Register a user</a></li>
+              <li><a href="#guide" data-jump="g-fingerprint">Enroll fingerprints</a></li>
+              <li><a href="#guide" data-jump="g-esp32">Set up the gate (ESP32)</a></li>
+              <li><a href="#guide" data-jump="g-camera">Run the camera (ANPR)</a></li>
+              <li><a href="#guide" data-jump="g-flow">Test a full gate visit</a></li>
+              <li><a href="#guide" data-jump="g-staff">Test the staff side (OTPs)</a></li>
+              <li><a href="#guide" data-jump="g-monitor">Live monitor &amp; records</a></li>
+              <li><a href="#guide" data-jump="g-render">Testing on Render instead</a></li>
+              <li><a href="#guide" data-jump="g-trouble">Troubleshooting</a></li>
+            </ol>
+          </nav>
+
+          <article class="panel" id="g-overview">
+            <h2>1. How the pieces fit</h2>
+            <ul>
+              <li><strong>Server</strong> (Flask, <code>backend/app.py</code>) &mdash; stores users, vehicles, photos, fingerprints and logs; serves this admin portal and the staff portal.</li>
+              <li><strong>Camera computer</strong> (<code>anpr/live_capture.py</code>) &mdash; watches the camera nonstop, reads plates, reports them to the server, then tells the ESP32 what to do.</li>
+              <li><strong>Gate</strong> (ESP32 + fingerprint sensor + keypad + servo) &mdash; for a registered car it asks for a fingerprint first, then an OTP if the driver isn't the owner. Visitor cars just get the gate opened.</li>
+              <li><strong>Admin portal</strong> (this page) &mdash; register users, enroll fingerprints, watch everything live.</li>
+              <li><strong>Staff portal</strong> (<code>/</code>) &mdash; registered users generate OTPs for other drivers of their car.</li>
+            </ul>
+            <p class="doc-note">All three devices (laptop, camera computer, ESP32) must be on the <strong>same Wi-Fi network</strong> for local testing. The camera computer can be the same laptop that runs the server.</p>
+          </article>
+
+          <article class="panel" id="g-server">
+            <h2>2. Run the server locally</h2>
+            <p>In PowerShell, from the project folder:</p>
+<pre><code>$env:DEVICE_API_KEY = ""
+.venv\Scripts\python.exe backend\app.py</code></pre>
+            <ul>
+              <li>The server runs on port 5000 and is reachable from other devices on your Wi-Fi (it listens on all addresses).</li>
+              <li>Admin portal: <a href="http://localhost:5000/admin">http://localhost:5000/admin</a> &middot; Staff portal: <a href="http://localhost:5000/">http://localhost:5000/</a></li>
+              <li>Find your laptop's Wi-Fi address with <code>ipconfig</code> (the <em>IPv4 Address</em>, e.g. <code>192.168.1.50</code>). The ESP32 needs it.</li>
+              <li>Emails and SMS aren't really sent locally &mdash; OTP emails and password-reset codes are <strong>printed in this server window</strong> instead.</li>
+            </ul>
+            <p class="doc-note"><strong>Device key:</strong> the line <code>$env:DEVICE_API_KEY = ""</code> turns off the device key check for local testing. If you'd rather keep a key, set the same value here, in the camera computer's window, and in the ESP32's <code>secrets.h</code>. If they don't match you'll get <em>"Invalid or missing device key"</em>.</p>
+            <p class="doc-note"><strong>Windows Firewall:</strong> the first time, Windows may ask whether Python can accept connections &mdash; allow it on <em>private networks</em>, or the ESP32 won't reach the server.</p>
+          </article>
+
+          <article class="panel" id="g-register">
+            <h2>3. Register a user</h2>
+            <ol>
+              <li>Open <a href="#register">Register user</a>.</li>
+              <li>Fill in identity, contact and vehicle details. Use a real plate you can show the camera (e.g. your own car, or a printed plate photo).</li>
+              <li>Add a passport photo and a front photo of the car with the plate visible. Large phone photos are fine &mdash; they're shrunk before uploading.</li>
+              <li>Fingerprints are optional here; you can add them on the user's profile later (next step).</li>
+              <li>Press <em>Register user</em>. Note the temporary password shown &mdash; it's for the staff portal.</li>
+            </ol>
+            <p>Check it worked: the user appears in <a href="#users">Registered users</a>; click them to see the profile, photos and vehicle.</p>
+          </article>
+
+          <article class="panel" id="g-fingerprint">
+            <h2>4. Enroll fingerprints</h2>
+            <p>Fingerprints are stored on the server, so you can enroll from any R307-type sensor connected to the computer you're using. Needs <strong>Chrome or Edge</strong>, on <code>localhost</code> or an <code>https://</code> address.</p>
+
+            <h3>Option A &mdash; use the gate's own sensor (no spare sensor)</h3>
+            <ol>
+              <li>Flash the latest firmware to the ESP32 (section 5).</li>
+              <li>With the gate idle, press <kbd>D</kbd> on the keypad, then <kbd>#</kbd>. It restarts and shows <strong>USB ENROLL MODE</strong>. The gate doesn't open cars in this mode.</li>
+              <li>Plug the ESP32 into this computer with its USB cable. <strong>Close the Arduino Serial Monitor</strong> &mdash; only one program can use the port.</li>
+              <li>Open the user's profile here &rarr; <em>Connect sensor</em> &rarr; choose the ESP32's COM port in the popup.</li>
+              <li>Pick a finger &rarr; <em>Scan finger</em> &rarr; place, lift, place again as prompted. Enroll at least two fingers.</li>
+              <li>When finished, press <kbd>D</kbd> on the keypad to go back to normal gate mode.</li>
+            </ol>
+
+            <h3>Option B &mdash; spare sensor + USB-TTL adapter</h3>
+            <p>Wire sensor TX &rarr; adapter RX, sensor RX &rarr; adapter TX, VCC &rarr; 5V, GND &rarr; GND. Plug in, then same as steps 4&ndash;5 above, choosing the adapter's COM port.</p>
+
+            <p class="doc-note">If you don't see a COM port in the popup, the USB driver may be missing (CH340/CP2102 drivers), or another program has the port open.</p>
+          </article>
+
+          <article class="panel" id="g-esp32">
+            <h2>5. Set up the gate (ESP32)</h2>
+            <ol>
+              <li>In <code>esp32/smart_gate_esp32/secrets.h</code>: your Wi-Fi name and password, and <code>DEVICE_API_KEY</code> (empty <code>""</code> for local testing, matching step 2).</li>
+              <li>In <code>smart_gate_esp32.ino</code>, near the top, point it at your laptop for local testing:
+<pre><code>// const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
+const char* SERVER_URL = "http://192.168.1.50:5000";   // your laptop's IPv4 address</code></pre>
+                Switch it back to the Render address before deploying.</li>
+              <li>Arduino IDE: board <em>ESP32S3 Dev Module</em>, PSRAM <em>OPI PSRAM</em>, Flash size <em>16MB</em>. Upload.</li>
+              <li>Open the Serial Monitor at 115200 baud. You should see Wi-Fi connected, the ESP32's IP address, and <code>[HEARTBEAT] HTTP: 200</code>.</li>
+              <li>Here on the <a href="#overview">Overview</a>, <em>Gate controller</em> should turn <strong>Online</strong> within a minute.</li>
+            </ol>
+          </article>
+
+          <article class="panel" id="g-camera">
+            <h2>6. Run the camera (ANPR)</h2>
+            <p>On the camera computer (can be this laptop), in a <strong>new</strong> PowerShell window from the project folder:</p>
+<pre><code>cd anpr
+$env:SERVER_URL = "http://localhost:5000"     # or http://LAPTOP-IP:5000 from another computer
+$env:ESP32_URL  = "http://192.168.1.80"       # the ESP32's IP (shown on its screen / Serial Monitor)
+$env:DEVICE_API_KEY = ""
+..\.venv\Scripts\python.exe live_capture.py</code></pre>
+            <p>You should see <em>ANPR live capture started</em>. Within a few seconds the <em>ANPR camera</em> turns Online here and the picture appears on the Overview and the <a href="monitor.html" target="_blank" rel="noopener">Live monitor</a>.</p>
+
+            <h3>Choosing the camera</h3>
+            <ul>
+              <li><strong>Laptop / USB webcam:</strong> default. If the wrong camera opens, try <code>$env:CAMERA_INDEX = "1"</code>.</li>
+              <li><strong>Phone as camera:</strong> install an IP-camera app (e.g. "IP Webcam" on Android), start it, then <code>$env:CAMERA_INDEX = "http://PHONE-IP:8080/video"</code>.</li>
+              <li><strong>No camera at all:</strong> use a video file of a car driving up: <code>$env:CAMERA_INDEX = "C:\path\to\clip.mp4"</code>.</li>
+              <li><strong>Raspberry Pi camera module:</strong> <code>CAMERA_BACKEND=picamera2</code>.</li>
+            </ul>
+
+            <h3>Useful settings while testing</h3>
+            <table class="data-table doc-table">
+              <tbody>
+                <tr><td><code>CONFIRM_READS</code></td><td>Same plate must be read this many times before acting (default 2). Set <code>1</code> for faster tests.</td></tr>
+                <tr><td><code>COOLDOWN_SECONDS</code></td><td>Ignore the same plate for this long after handling it (default 30). Lower it to re-test the same car quickly.</td></tr>
+                <tr><td><code>PREFILTER</code></td><td><code>motion</code> (default) reads plates when something moves. <code>none</code> reads every frame &mdash; use this when holding a still photo up to the camera.</td></tr>
+                <tr><td><code>ANPR_EVENT_TYPE</code></td><td><code>entry</code> or <code>exit</code> for this camera.</td></tr>
+                <tr><td><code>CAMERA_PUSH_INTERVAL</code></td><td>Seconds between live frames sent to the monitor (default 1, <code>0</code> = off).</td></tr>
+              </tbody>
+            </table>
+            <p class="doc-note">If the ESP32 isn't set up yet, leave <code>ESP32_URL</code> as it is &mdash; plates are still detected and show up here; the script just prints that it couldn't reach the gate.</p>
+          </article>
+
+          <article class="panel" id="g-flow">
+            <h2>7. Test a full gate visit</h2>
+            <p>Keep the <a href="monitor.html" target="_blank" rel="noopener">Live monitor</a> open while you do these &mdash; every step appears there as it happens.</p>
+
+            <h3>A. Visitor car</h3>
+            <p>Show the camera a plate that <strong>isn't registered</strong>. Expect: monitor shows <em>Visitor &ndash; gate opened</em>, servo lifts for 5 s.</p>
+
+            <h3>B. Owner driving</h3>
+            <ol>
+              <li>Show the camera the registered plate. ESP32 beeps twice, shows <em>STAFF VEHICLE</em>, then <em>SCAN FINGER</em>.</li>
+              <li>Scan one of the owner's enrolled fingers. Expect: <em>OWNER VERIFIED</em>, gate opens; monitor shows <em>Access granted &ndash; owner verified by fingerprint</em>.</li>
+            </ol>
+
+            <h3>C. Someone else driving (OTP)</h3>
+            <ol>
+              <li>Generate an OTP from the staff portal first (section 8).</li>
+              <li>Show the registered plate, then scan a finger that is <strong>not</strong> the owner's. Expect: <em>NOT THE OWNER &ndash; Enter owner's OTP</em>. The keypad only works after a finger has been scanned.</li>
+              <li>Type the 6-digit OTP. Expect: gate opens; monitor shows <em>Access granted &ndash; driver verified by OTP</em>. The OTP can't be reused.</li>
+            </ol>
+
+            <h3>D. Failures</h3>
+            <ul>
+              <li>Wrong OTP: <em>OTP REJECTED</em>, 3 tries in total, then <em>ACCESS DENIED</em>.</li>
+              <li>Do nothing for 90 seconds: <em>TIMEOUT</em>, gate stays closed.</li>
+              <li>User with no fingerprints enrolled: gate goes straight to OTP.</li>
+            </ul>
+          </article>
+
+          <article class="panel" id="g-staff">
+            <h2>8. Test the staff side (OTPs)</h2>
+            <ol>
+              <li>Open the <a href="/" target="_blank" rel="noopener">staff portal</a> in a <strong>different browser or private window</strong> (staff and admin logins are separate).</li>
+              <li>Log in with the user's <strong>ID number</strong> and the temporary password from registration (locally it's <code>local-dev-only</code>).</li>
+              <li>Generate an OTP. Locally the email isn't sent &mdash; the code is on screen and also printed in the server window.</li>
+              <li>Try <em>Forgot password?</em>: the reset code is printed in the server window locally.</li>
+              <li>Confirm admin login details are rejected on the staff login, and vice versa.</li>
+            </ol>
+          </article>
+
+          <article class="panel" id="g-monitor">
+            <h2>9. Live monitor &amp; records</h2>
+            <ul>
+              <li><a href="monitor.html" target="_blank" rel="noopener">Live monitor</a> &mdash; meant for the big screen. Press <em>Full screen</em>. Shows the camera, the current car's state, owner photo, and the camera frame beside the registered car photo so the guard can compare them.</li>
+              <li><a href="#logs">Access log</a> &mdash; every fingerprint/OTP decision; filter by method, direction, result and dates.</li>
+              <li><a href="#detections">Camera detections</a> &mdash; every plate the camera read, with the frame it came from (the latest 300 frames are kept).</li>
+              <li><a href="#overview">Overview</a> &mdash; today's numbers and whether the gate and camera are online.</li>
+            </ul>
+          </article>
+
+          <article class="panel" id="g-render">
+            <h2>10. Testing on Render instead</h2>
+            <ol>
+              <li>Merge the <code>admin-dashboard-server-fingerprints</code> branch into <code>main</code> and push; wait for Render to redeploy.</li>
+              <li>On Render, keep the app to <strong>one worker</strong> (live camera and logins are held in memory).</li>
+              <li>Admin portal: <code>https://verigate-ry5y.onrender.com/admin</code>.</li>
+              <li>ESP32: switch <code>SERVER_URL</code> back to the Render address; <code>DEVICE_API_KEY</code> in <code>secrets.h</code> must match Render's.</li>
+              <li>Camera computer: <code>SERVER_URL=https://verigate-ry5y.onrender.com</code> and the same <code>DEVICE_API_KEY</code>.</li>
+              <li>Fingerprint enrollment works the same way from Chrome on the Render address.</li>
+            </ol>
+          </article>
+
+          <article class="panel" id="g-trouble">
+            <h2>11. Troubleshooting</h2>
+            <table class="data-table doc-table">
+              <tbody>
+                <tr><td>"Invalid or missing device key"</td><td><code>DEVICE_API_KEY</code> differs between the server, camera computer and ESP32. Make them identical (or all empty locally).</td></tr>
+                <tr><td>Gate controller stays Offline</td><td>Wrong <code>SERVER_URL</code> in the firmware, laptop firewall blocking port 5000, or ESP32 on a different Wi-Fi.</td></tr>
+                <tr><td>Camera Online but no plates detected</td><td>Plate too small or blurry &mdash; move closer; try <code>PREFILTER=none</code> and <code>CONFIRM_READS=1</code>.</td></tr>
+                <tr><td>Plate detected but gate does nothing</td><td>Camera computer can't reach the ESP32 &mdash; set <code>ESP32_URL</code> to the ESP32's IP instead of <code>verigate.local</code>.</td></tr>
+                <tr><td>"Connect sensor" shows no ports</td><td>Use Chrome/Edge; close Arduino Serial Monitor; install the CH340/CP2102 driver.</td></tr>
+                <tr><td>Sensor "stopped responding"</td><td>Check TX/RX aren't swapped; for Option A, make sure the gate shows USB ENROLL MODE.</td></tr>
+                <tr><td>Owner's finger says NOT THE OWNER</td><td>Re-enroll that finger, pressing flat both times; enroll a second finger as backup.</td></tr>
+                <tr><td>Live monitor logs you out</td><td>The server restarted (logins are in memory) &mdash; just log in again.</td></tr>
+              </tbody>
+            </table>
+          </article>
+        </div>
       </section>
     </main>
   </div>

@@ -813,3 +813,44 @@ textarea { resize: vertical; min-height: 72px; }
   .m-feed-item { grid-template-columns: 70px minmax(0, 1fr) auto; }
   .m-feed-item .msg { grid-column: 1 / -1; white-space: normal; }
 }
+
+/* ---------- testing guide (temporary) ---------- */
+
+.doc { display: grid; gap: 16px; max-width: 920px; }
+.doc .panel + .panel { margin-top: 0; }
+.doc h2 { margin-bottom: 10px; }
+.doc h3 { margin: 18px 0 6px; }
+.doc p, .doc li { font-size: 0.93rem; }
+.doc ul, .doc ol { padding-left: 22px; margin: 8px 0; }
+.doc li { margin: 4px 0; }
+.doc article { scroll-margin-top: 16px; }
+.doc code, .doc kbd {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.doc kbd { font-weight: 700; }
+.doc pre {
+  background: #0f1d33;
+  color: #dbe6f7;
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.doc pre code { background: none; border: none; padding: 0; color: inherit; font-size: 0.85rem; }
+.doc-note {
+  background: var(--warn-soft);
+  color: #5c3b00;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.doc-toc ol { columns: 2; column-gap: 24px; }
+.doc-table td:first-child { white-space: nowrap; font-weight: 600; width: 1%; }
+@media (max-width: 760px) {
+  .doc-toc ol { columns: 1; }
+  .doc-table td:first-child { white-space: normal; }
+}

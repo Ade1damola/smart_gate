@@ -26,6 +26,13 @@
  *   2. Owner's finger  -> gate opens.
  *      Anyone else     -> driver enters the owner's OTP on the keypad.
  *
+ * USB enroll mode (when there's no spare sensor): press D on the keypad
+ * while idle and confirm with #. The ESP32 restarts as a plain USB <->
+ * sensor bridge, so the admin page in Chrome can enroll fingerprints
+ * using this gate's sensor over the USB cable. Press D again to return to
+ * normal gate operation. The mode is saved, so it survives the reset some
+ * boards do when Chrome opens the port.
+ *
  * Wiring (ESP32-S3-N16R8):
  *   R307 Fingerprint: TX→GPIO18, RX→GPIO17, VCC→5V, GND→GND
  *   4x4 Keypad:       Rows→GPIO 4,5,6,7  Cols→GPIO 10,11,12,13
@@ -46,6 +53,7 @@
 #include <Adafruit_Fingerprint.h>
 #include <Keypad.h>
 #include <ESP32Servo.h>
+#include <Preferences.h>
 #include "mbedtls/base64.h"
 
 
@@ -174,6 +182,9 @@ int legacyCount = 0;
 
 uint16_t sensorPacketLength = 128;
 unsigned long lastHeartbeat = 0;
+
+Preferences settings;
+bool usbEnrollMode = false;
 
 
 // ============================================================
@@ -795,26 +806,74 @@ void processVerification() {
 
 
 // ============================================================
+// USB ENROLL MODE
+// ============================================================
+
+void setUsbEnrollMode(bool enabled) {
+    settings.putBool("usb_enroll", enabled);
+    displayMessage(enabled ? "USB ENROLL MODE" : "GATE MODE", "Restarting...", "");
+    delay(800);
+    ESP.restart();
+}
+
+// Called when D is pressed while the gate is idle.
+void confirmUsbEnrollMode() {
+    displayMessage("USB ENROLL MODE?", "#=Yes  *=No", "Gate stops working");
+    unsigned long start = millis();
+    while (millis() - start < 10000) {
+        char key = keypad.getKey();
+        if (key == '#') setUsbEnrollMode(true);
+        if (key == '*') break;
+        delay(30);
+    }
+    showIdleScreen();
+}
+
+// Passes bytes straight between the USB port and the fingerprint sensor,
+// so the admin page in Chrome can drive the sensor as if it were plugged
+// into the laptop. Nothing else may be printed to Serial in this mode -
+// it would corrupt the sensor's packets.
+void runUsbBridge() {
+    while (Serial.available()) Serial1.write(Serial.read());
+    while (Serial1.available()) Serial.write(Serial1.read());
+    if (keypad.getKey() == 'D') setUsbEnrollMode(false);
+}
+
+void setupUsbBridge() {
+    // Same baud rate the admin page opens the port at, and the sensor's.
+    Serial.begin(57600);
+    Serial1.begin(57600, SERIAL_8N1, FP_RX_PIN, FP_TX_PIN);
+    gateServo.attach(SERVO_PIN);
+    gateServo.write(0);
+    displayMessage("USB ENROLL MODE", "Use admin page", "D = back to gate");
+    beepAlert();
+}
+
+
+// ============================================================
 // SETUP
 // ============================================================
 
 void setup() {
+    pinMode(BUZZER_PIN, OUTPUT);
+    digitalWrite(BUZZER_PIN, LOW);
+    Wire.begin(OLED_SDA, OLED_SCL);
+    display.begin(OLED_ADDR);
+
+    settings.begin("gate", false);
+    usbEnrollMode = settings.getBool("usb_enroll", false);
+    if (usbEnrollMode) {
+        setupUsbBridge();
+        return;
+    }
+
     Serial.begin(115200);
     delay(1000);
     Serial.println("\n\n========================================");
     Serial.println("  SMART GATE SYSTEM - Starting up...");
     Serial.println("========================================\n");
 
-    pinMode(BUZZER_PIN, OUTPUT);
-    digitalWrite(BUZZER_PIN, LOW);
     Serial.println("[INIT] Buzzer: OK");
-
-    Wire.begin(OLED_SDA, OLED_SCL);
-    if (!display.begin(OLED_ADDR)) {
-        Serial.println("[INIT] OLED: FAILED!");
-    } else {
-        Serial.println("[INIT] OLED: OK");
-    }
     displayMessage("SMART GATE", "Starting up...", "");
 
     gateServo.attach(SERVO_PIN);
@@ -902,13 +961,23 @@ void setup() {
 // ============================================================
 
 void loop() {
+    if (usbEnrollMode) {
+        runUsbBridge();
+        return;
+    }
+
     localServer.handleClient();
 
     if (awaitingVerification) {
         processVerification();
-    } else if (WiFi.status() == WL_CONNECTED && millis() - lastHeartbeat > HEARTBEAT_INTERVAL_MS) {
-        lastHeartbeat = millis();
-        sendHeartbeat();
+    } else {
+        if (keypad.getKey() == 'D') {
+            confirmUsbEnrollMode();
+        }
+        if (WiFi.status() == WL_CONNECTED && millis() - lastHeartbeat > HEARTBEAT_INTERVAL_MS) {
+            lastHeartbeat = millis();
+            sendHeartbeat();
+        }
     }
 
     // Check Wi-Fi connection and reconnect if needed

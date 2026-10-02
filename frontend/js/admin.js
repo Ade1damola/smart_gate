@@ -56,6 +56,8 @@
       setActiveNav("logs"); showView("logs"); loadLogs();
     } else if (name === "detections") {
       setActiveNav("detections"); showView("detections"); loadDetections();
+    } else if (name === "guide") {
+      setActiveNav("guide"); showView("guide");
     } else {
       setActiveNav("overview"); showView("overview"); stopPolling = startOverview();
     }
@@ -757,6 +759,18 @@
         "</div></div>";
     }).join("");
   }
+
+  // ---------------------------------------------------------------------
+  // Testing guide (temporary): in-page section links. The hash is already
+  // used for routing, so these scroll instead of changing it.
+  // ---------------------------------------------------------------------
+
+  document.querySelectorAll("[data-jump]").forEach(function (link) {
+    link.addEventListener("click", function (event) {
+      event.preventDefault();
+      document.getElementById(link.dataset.jump).scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
 
   // ---------------------------------------------------------------------
 

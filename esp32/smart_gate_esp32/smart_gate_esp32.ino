@@ -2,20 +2,30 @@
  * ============================================================
  * SMART GATE SECURITY SYSTEM - ESP32-S3-N16R8
  * ============================================================
- * 
+ *
  * Board: ESP32-S3 Dev Module
  * PSRAM: OPI PSRAM
  * Flash Size: 16MB
- * 
+ *
  * This ESP32 handles:
- *   - Receives staff vehicle alerts from the Raspberry Pi (local HTTP)
+ *   - Receives registered-vehicle alerts from the ANPR computer (local HTTP)
  *   - Buzzes and displays on OLED to notify the guard
- *   - Reads fingerprint for owner verification
- *   - Reads OTP from keypad for non-owner verification
- *   - Sends verification requests to the hosted server (Render)
+ *   - Downloads the vehicle owner's fingerprint templates from the server
+ *     and matches the driver's finger against them on the sensor (1:1)
+ *   - Falls back to an OTP on the keypad when the driver isn't the owner
+ *   - Reports every step to the hosted server (Render) for the live monitor
  *   - Controls the gate servo motor
- *   - Logs events to the hosted server
- * 
+ *
+ * Fingerprints are NOT stored on this sensor. They're enrolled from any
+ * spare sensor through the admin web page and kept on the server, so the
+ * gate hardware is never needed during registration and a replacement
+ * sensor works immediately.
+ *
+ * Gate flow for a registered vehicle:
+ *   1. Driver scans a finger (always first).
+ *   2. Owner's finger  -> gate opens.
+ *      Anyone else     -> driver enters the owner's OTP on the keypad.
+ *
  * Wiring (ESP32-S3-N16R8):
  *   R307 Fingerprint: TX→GPIO18, RX→GPIO17, VCC→5V, GND→GND
  *   4x4 Keypad:       Rows→GPIO 4,5,6,7  Cols→GPIO 10,11,12,13
@@ -33,11 +43,10 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1327.h>
-#include <Adafruit_Fingerprint.h> 
+#include <Adafruit_Fingerprint.h>
 #include <Keypad.h>
 #include <ESP32Servo.h>
-#include <Preferences.h>
-#include <time.h>
+#include "mbedtls/base64.h"
 
 
 // ============================================================
@@ -91,33 +100,31 @@ const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
 // Servo motor (gate barrier)
 #define SERVO_PIN   15
 
-// Built-in RGB LED (available on GPIO48 for status)
-#define RGB_LED_PIN 48
-
 
 // ============================================================
-// TIMING CONSTANTS
+// TIMING / LIMITS
 // ============================================================
 
-#define VERIFICATION_TIMEOUT_MS  60000   // 60 seconds to verify before timeout
+#define VERIFICATION_TIMEOUT_MS  90000   // Whole verification must finish in 90 s
+#define OTP_ENTRY_TIMEOUT_MS     45000   // Time to type one OTP
 #define GATE_OPEN_DURATION_MS    5000    // Keep gate open for 5 seconds
 #define BUZZER_BEEP_MS           300     // Single beep duration
 #define OTP_LENGTH               6       // 6-digit OTP
-// #define TEMP_FINGERPRINT_ID      127     // Reserved R307 slot for temporary access
-// #define TEMP_FINGERPRINT_HOURS   48
+#define MAX_OTP_ATTEMPTS         3
+#define HEARTBEAT_INTERVAL_MS    60000   // "Still online" ping while idle
+
+#define MAX_TEMPLATES            6       // Owner fingerprints held per vehicle
+#define MAX_TEMPLATE_BYTES       1024    // R307 templates are 512 bytes
+#define MAX_LEGACY_IDS           6
 
 
 // ============================================================
 // HARDWARE OBJECTS
 // ============================================================
 
-// OLED display
 Adafruit_SSD1327 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
-
-// Fingerprint sensor on Serial1
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial1);
 
-// Keypad setup
 const byte ROWS = 4;
 const byte COLS = 4;
 char keys[ROWS][COLS] = {
@@ -130,29 +137,43 @@ byte rowPins[ROWS] = {ROW1_PIN, ROW2_PIN, ROW3_PIN, ROW4_PIN};
 byte colPins[COLS] = {COL1_PIN, COL2_PIN, COL3_PIN, COL4_PIN};
 Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 
-// Servo motor
 Servo gateServo;
 
-// Local web server (receives alerts from Raspberry Pi)
+// Local web server (receives alerts from the ANPR computer)
 WebServer localServer(80);
-// Preferences temporaryFingerprintStore;
 
 
 // ============================================================
 // SYSTEM STATE
 // ============================================================
 
+enum VerifyPhase {
+    PHASE_LOAD_TEMPLATES,   // fetch the owner's fingerprints from the server
+    PHASE_FINGERPRINT,      // waiting for the driver's finger
+    PHASE_OTP               // driver isn't the owner: waiting for an OTP
+};
+
 bool awaitingVerification = false;
+VerifyPhase phase = PHASE_LOAD_TEMPLATES;
 String pendingStaffId = "";
 String pendingOwnerName = "";
 String pendingPlate = "";
-int pendingFingerprintId = -1;
 String pendingEventType = "EXIT";
 unsigned long verificationStartTime = 0;
-// bool temporaryFingerprintActive = false;
-// time_t temporaryFingerprintExpiry = 0;
-// String temporaryFingerprintStaffId = "";
-// String temporaryFingerprintPlate = "";
+int otpAttempts = 0;
+
+// Owner's fingerprint templates, downloaded per vehicle.
+uint8_t templates[MAX_TEMPLATES][MAX_TEMPLATE_BYTES];
+size_t templateLengths[MAX_TEMPLATES];
+int templateIds[MAX_TEMPLATES];
+int templateCount = 0;
+
+// Fingerprints enrolled the old way, in this sensor's own library.
+int legacyIds[MAX_LEGACY_IDS];
+int legacyCount = 0;
+
+uint16_t sensorPacketLength = 128;
+unsigned long lastHeartbeat = 0;
 
 
 // ============================================================
@@ -162,24 +183,17 @@ unsigned long verificationStartTime = 0;
 void displayMessage(String line1, String line2, String line3) {
     display.clearDisplay();
     display.setTextColor(SSD1327_WHITE);
-
-    // Line 1: large text
     display.setTextSize(1);
     display.setCursor(0, 0);
     display.println(line1);
-
-    // Line 2: medium text
     display.setCursor(0, 12);
     display.println(line2);
-
-    // Line 3: small text
     display.setCursor(0, 24);
     display.println(line3);
-
     display.display();
 }
 
-void displayLargeOTP(String otp, int digits_entered) {
+void displayLargeOTP(String otp) {
     display.clearDisplay();
     display.setTextColor(SSD1327_WHITE);
 
@@ -187,23 +201,15 @@ void displayLargeOTP(String otp, int digits_entered) {
     display.setCursor(0, 0);
     display.println("ENTER OTP:");
 
-    // Show entered digits as large text
     display.setTextSize(2);
     display.setCursor(4, 8);
-
-    // Show entered digits and underscores for remaining
     for (int i = 0; i < OTP_LENGTH; i++) {
-        if (i < digits_entered) {
-            display.print(otp[i]);
-        } else {
-            display.print("_");
-        }
+        display.print(i < (int)otp.length() ? otp[i] : '_');
     }
 
     display.setTextSize(1);
     display.setCursor(0, 24);
     display.println("#=Confirm  *=Clear");
-
     display.display();
 }
 
@@ -211,8 +217,7 @@ void showIdleScreen() {
     /*
      * The screen shown whenever the gate isn't mid-verification. Always
      * reflects live Wi-Fi state so the guard has a way to tell the system
-     * is offline without needing a Serial Monitor - a plain "System ready"
-     * regardless of connectivity would be actively misleading in the field.
+     * is offline without needing a Serial Monitor.
      */
     if (WiFi.status() == WL_CONNECTED) {
         displayMessage("SMART GATE", "System ready", "Waiting for vehicle...");
@@ -221,20 +226,26 @@ void showIdleScreen() {
     }
 }
 
+void showFingerPrompt() {
+    displayMessage("SCAN FINGER", pendingPlate, "Driver: place finger");
+}
+
+void showOtpPrompt() {
+    displayMessage("NOT THE OWNER", "Enter owner's OTP", "Owner: rescan finger");
+}
+
 
 // ============================================================
 // BUZZER FUNCTIONS
 // ============================================================
 
 void beepSuccess() {
-    // Single long beep = success
     digitalWrite(BUZZER_PIN, HIGH);
     delay(BUZZER_BEEP_MS);
     digitalWrite(BUZZER_PIN, LOW);
 }
 
 void beepAlert() {
-    // Two short beeps = staff vehicle detected, guard attention
     for (int i = 0; i < 2; i++) {
         digitalWrite(BUZZER_PIN, HIGH);
         delay(150);
@@ -244,7 +255,6 @@ void beepAlert() {
 }
 
 void beepError() {
-    // Three rapid beeps = access denied
     for (int i = 0; i < 3; i++) {
         digitalWrite(BUZZER_PIN, HIGH);
         delay(100);
@@ -263,9 +273,9 @@ void openGate() {
     displayMessage("ACCESS GRANTED", "Gate opening...", "");
     beepSuccess();
 
-    gateServo.write(180);              // Lift barrier (180 degrees)
-    delay(GATE_OPEN_DURATION_MS);      // Hold open
-    gateServo.write(0);                // Lower barrier (0 degrees)
+    gateServo.write(180);              // Lift barrier
+    delay(GATE_OPEN_DURATION_MS);
+    gateServo.write(0);                // Lower barrier
 
     Serial.println("[GATE] Closed.");
     showIdleScreen();
@@ -273,465 +283,303 @@ void openGate() {
 
 
 // ============================================================
-// FINGERPRINT FUNCTIONS
+// RAW SENSOR PROTOCOL
+// ------------------------------------------------------------
+// The Adafruit library has no calls for loading a template into the
+// sensor (DownChar) or comparing its two buffers (Match), so those speak
+// the R307 packet protocol directly on Serial1.
 // ============================================================
 
-void logEventToServer(String staffId, String plate, String method,
-                      String eventType, String status, String details);
+#define FP_PID_COMMAND 0x01
+#define FP_PID_DATA    0x02
+#define FP_PID_ACK     0x07
+#define FP_PID_END     0x08
 
-bool clockIsValid() {
-    return time(nullptr) > 1700000000;
+void fpWritePacket(uint8_t pid, const uint8_t* data, uint16_t len) {
+    uint16_t length = len + 2;
+    uint16_t sum = pid + (length >> 8) + (length & 0xFF);
+    const uint8_t header[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, pid,
+                              (uint8_t)(length >> 8), (uint8_t)(length & 0xFF)};
+    Serial1.write(header, sizeof(header));
+    for (uint16_t i = 0; i < len; i++) {
+        sum += data[i];
+    }
+    Serial1.write(data, len);
+    Serial1.write((uint8_t)(sum >> 8));
+    Serial1.write((uint8_t)(sum & 0xFF));
 }
 
-/* --- Temporary fingerprint feature (disabled) ---
-void clearTemporaryFingerprint(const String& reason) {
-    if (temporaryFingerprintActive) {
-        uint8_t result = finger.deleteModel(TEMP_FINGERPRINT_ID);
-        Serial.print("[FP] Temporary template deleted, result: ");
-        Serial.println(result);
+int fpReadByte(unsigned long deadline) {
+    while (millis() < deadline) {
+        if (Serial1.available()) return Serial1.read();
+        delay(1);
     }
-
-    temporaryFingerprintStore.clear();
-    temporaryFingerprintActive = false;
-    temporaryFingerprintExpiry = 0;
-    temporaryFingerprintStaffId = "";
-    temporaryFingerprintPlate = "";
-    Serial.print("[FP] Temporary fingerprint cleared: ");
-    Serial.println(reason);
-}
-
-void loadTemporaryFingerprint() {
-    temporaryFingerprintExpiry = temporaryFingerprintStore.getULong64("expiry", 0);
-    temporaryFingerprintStaffId = temporaryFingerprintStore.getString("staff", "");
-    temporaryFingerprintPlate = temporaryFingerprintStore.getString("plate", "");
-    temporaryFingerprintActive = temporaryFingerprintExpiry > 0 &&
-                                 temporaryFingerprintStaffId.length() > 0 &&
-                                 temporaryFingerprintPlate.length() > 0;
-
-    if (temporaryFingerprintActive && clockIsValid() &&
-        time(nullptr) >= temporaryFingerprintExpiry) {
-        clearTemporaryFingerprint("expired at startup");
-    }
-}
-
-void expireTemporaryFingerprintIfNeeded() {
-    if (!temporaryFingerprintActive || !clockIsValid()) {
-        return;
-    }
-
-    if (time(nullptr) >= temporaryFingerprintExpiry) {
-        clearTemporaryFingerprint("48-hour expiry");
-    }
-}
-
-bool enrollTemporaryFingerprint() {
-    if (!clockIsValid()) {
-        Serial.println("[FP] Cannot save temporary fingerprint: clock not synchronized.");
-        displayMessage("FP NOT SAVED", "Time unavailable", "Use OTP again");
-        return false;
-    }
-
-    if (temporaryFingerprintActive) {
-        clearTemporaryFingerprint("replaced by new OTP approval");
-    }
-
-    Serial.print("[FP] Enrolling temporary fingerprint at ID ");
-    Serial.println(TEMP_FINGERPRINT_ID);
-    displayMessage("SAVE FINGERPRINT", "Place finger on", "scanner...");
-
-    int p = -1;
-    while (p != FINGERPRINT_OK) {
-        p = finger.getImage();
-        delay(100);
-    }
-    p = finger.image2Tz(1);
-    if (p != FINGERPRINT_OK) return false;
-
-    displayMessage("SAVE FINGERPRINT", "Remove finger", "");
-    delay(1500);
-    while (finger.getImage() != FINGERPRINT_NOFINGER) {
-        delay(100);
-    }
-
-    displayMessage("SAVE FINGERPRINT", "Place same finger", "again...");
-    p = -1;
-    while (p != FINGERPRINT_OK) {
-        p = finger.getImage();
-        delay(100);
-    }
-    p = finger.image2Tz(2);
-    if (p != FINGERPRINT_OK) return false;
-    p = finger.createModel();
-    if (p != FINGERPRINT_OK) return false;
-    p = finger.storeModel(TEMP_FINGERPRINT_ID);
-    if (p != FINGERPRINT_OK) return false;
-
-    temporaryFingerprintExpiry = time(nullptr) + (TEMP_FINGERPRINT_HOURS * 3600);
-    temporaryFingerprintStaffId = pendingStaffId;
-    temporaryFingerprintPlate = pendingPlate;
-    temporaryFingerprintStore.putULong64("expiry", temporaryFingerprintExpiry);
-    temporaryFingerprintStore.putString("staff", temporaryFingerprintStaffId);
-    temporaryFingerprintStore.putString("plate", temporaryFingerprintPlate);
-    temporaryFingerprintActive = true;
-
-    Serial.print("[FP] Temporary fingerprint saved until epoch ");
-    Serial.println((unsigned long)temporaryFingerprintExpiry);
-    logEventToServer(pendingStaffId, pendingPlate, "TEMP_FINGERPRINT",
-                     pendingEventType, "SUCCESS", "Temporary fingerprint enrolled for 48 hours");
-    displayMessage("FINGERPRINT SAVED", "Valid for 48 hours", "Opening gate...");
-    beepSuccess();
-    return true;
-}
---- end temporary fingerprint feature --- */
-
-int scanFingerprint() {
-    /*
-     * Attempts to read and match a fingerprint.
-     * Returns the matched template ID if found, or -1 if no match / no finger.
-     * Non-blocking: returns immediately if no finger is on the sensor.
-     */
-    // expireTemporaryFingerprintIfNeeded();  // temp fingerprint feature disabled
-    uint8_t p = finger.getImage();
-    if (p != FINGERPRINT_OK) {
-        return -1;  // No finger detected or error
-    }
-
-    p = finger.image2Tz();
-    if (p != FINGERPRINT_OK) {
-        Serial.println("[FP] Image conversion failed.");
-        return -1;
-    }
-
-    p = finger.fingerFastSearch();
-    if (p == FINGERPRINT_OK) {
-        Serial.print("[FP] Match found! Template ID: ");
-        Serial.print(finger.fingerID);
-        Serial.print(" | Confidence: ");
-        Serial.println(finger.confidence);
-        return finger.fingerID;
-    }
-
-    Serial.println("[FP] No match found.");
     return -1;
 }
 
-bool enrollFingerprint(int id) {
-    /*
-     * Enrolls a new fingerprint at the given template ID.
-     * Used during staff registration by the admin.
-     * Blocks until enrollment is complete or fails.
-     */
-    Serial.print("[FP] Enrolling fingerprint at ID: ");
-    Serial.println(id);
-    displayMessage("ENROLL FINGER", "Place finger on", "scanner...");
-
-    // First scan
-    int p = -1;
-    while (p != FINGERPRINT_OK) {
-        p = finger.getImage();
-        delay(100);
+// Reads one acknowledgement packet. Returns the payload length (confirm
+// code first) or -1 on timeout / malformed reply.
+int fpReadAck(uint8_t* payload, int maxLen, unsigned long timeoutMs) {
+    unsigned long deadline = millis() + timeoutMs;
+    int previous = -1;
+    while (true) {
+        int b = fpReadByte(deadline);
+        if (b < 0) return -1;
+        if (previous == 0xEF && b == 0x01) break;
+        previous = b;
     }
-
-    p = finger.image2Tz(1);
-    if (p != FINGERPRINT_OK) return false;
-
-    displayMessage("ENROLL FINGER", "Remove finger", "");
-    delay(2000);
-
-    // Wait for finger removal
-    while (finger.getImage() != FINGERPRINT_NOFINGER) {
-        delay(100);
+    uint8_t meta[7];  // 4 address bytes, pid, 2 length bytes
+    for (int i = 0; i < 7; i++) {
+        int b = fpReadByte(deadline);
+        if (b < 0) return -1;
+        meta[i] = b;
     }
-
-    displayMessage("ENROLL FINGER", "Place same finger", "again...");
-
-    // Second scan
-    p = -1;
-    while (p != FINGERPRINT_OK) {
-        p = finger.getImage();
-        delay(100);
+    int length = (meta[5] << 8) | meta[6];
+    int payloadLen = length - 2;
+    if (meta[4] != FP_PID_ACK || payloadLen < 1 || payloadLen > maxLen) return -1;
+    for (int i = 0; i < length; i++) {   // payload + 2 checksum bytes
+        int b = fpReadByte(deadline);
+        if (b < 0) return -1;
+        if (i < payloadLen) payload[i] = b;
     }
+    return payloadLen;
+}
 
-    p = finger.image2Tz(2);
-    if (p != FINGERPRINT_OK) return false;
+void fpFlushInput() {
+    while (Serial1.available()) Serial1.read();
+}
 
-    // Create model from the two scans
-    p = finger.createModel();
-    if (p != FINGERPRINT_OK) return false;
-
-    // Store the model at the given ID
-    p = finger.storeModel(id);
-    if (p == FINGERPRINT_OK) {
-        Serial.println("[FP] Enrollment successful!");
-        displayMessage("ENROLL SUCCESS", "Fingerprint saved", "");
-        beepSuccess();
-        delay(1500);
-        return true;
+// Loads a template into the sensor's CharBuffer2.
+bool fpLoadTemplate(const uint8_t* data, size_t len) {
+    fpFlushInput();
+    const uint8_t command[] = {0x09, 0x02};
+    fpWritePacket(FP_PID_COMMAND, command, sizeof(command));
+    uint8_t ack[4];
+    if (fpReadAck(ack, sizeof(ack), 1000) < 1 || ack[0] != 0x00) {
+        Serial.println("[FP] Sensor refused template download.");
+        return false;
     }
+    size_t offset = 0;
+    while (offset < len) {
+        size_t chunk = min((size_t)sensorPacketLength, len - offset);
+        bool last = offset + chunk >= len;
+        fpWritePacket(last ? FP_PID_END : FP_PID_DATA, data + offset, chunk);
+        offset += chunk;
+    }
+    Serial1.flush();
+    delay(20);
+    return true;
+}
 
-    return false;
+// Compares CharBuffer1 (live finger) with CharBuffer2 (loaded template).
+bool fpMatchBuffers(int& score) {
+    fpFlushInput();
+    const uint8_t command[] = {0x03};
+    fpWritePacket(FP_PID_COMMAND, command, sizeof(command));
+    uint8_t ack[4];
+    int len = fpReadAck(ack, sizeof(ack), 1000);
+    if (len < 3) return false;
+    score = (ack[1] << 8) | ack[2];
+    return ack[0] == 0x00;
 }
 
 
 // ============================================================
-// KEYPAD FUNCTIONS
+// FINGERPRINT VERIFICATION
 // ============================================================
 
-String readOTPFromKeypad() {
-    /*
-     * Waits for the user to enter a 6-digit OTP on the keypad.
-     * Shows progress on the OLED display.
-     * '#' confirms, '*' clears all entered digits.
-     * Returns the OTP string, or empty string if timeout.
-     */
-    String otp = "";
-    unsigned long startTime = millis();
+/*
+ * Checks the finger currently on the sensor against the owner.
+ * Returns -1 if there's no (usable) finger, 0 if it's someone else,
+ * 1 if it's the owner (matchedRef/score describe which template matched).
+ */
+int checkDriverFinger(String& matchedRef, int& score) {
+    if (finger.getImage() != FINGERPRINT_OK) return -1;
+    if (finger.image2Tz(1) != FINGERPRINT_OK) {
+        displayMessage("SCAN FINGER", "Unclear print", "Press flat, again");
+        delay(800);
+        return -1;
+    }
 
-    displayLargeOTP(otp, 0);
+    displayMessage("CHECKING...", pendingPlate, "Keep finger still");
 
-    while (millis() - startTime < VERIFICATION_TIMEOUT_MS) {
-        char key = keypad.getKey();
+    for (int i = 0; i < templateCount; i++) {
+        if (fpLoadTemplate(templates[i], templateLengths[i]) && fpMatchBuffers(score)) {
+            matchedRef = "db:" + String(templateIds[i]);
+            return 1;
+        }
+    }
 
-        if (key) {
-            if (key >= '0' && key <= '9') {
-                // Digit pressed
-                if (otp.length() < OTP_LENGTH) {
-                    otp += key;
-                    displayLargeOTP(otp, otp.length());
-                    Serial.print("[KEYPAD] Digit entered: ");
-                    Serial.println(key);
-                }
-
-                // Auto-submit when 6 digits entered
-                if (otp.length() == OTP_LENGTH) {
-                    delay(300);  // Brief pause so user sees all digits
-                    return otp;
-                }
-
-            } else if (key == '*') {
-                // Clear all digits
-                otp = "";
-                displayLargeOTP(otp, 0);
-                Serial.println("[KEYPAD] Cleared.");
-
-            } else if (key == '#') {
-                // Confirm (even if less than 6 digits, in case of error)
-                if (otp.length() == OTP_LENGTH) {
-                    return otp;
-                } else {
-                    displayMessage("ENTER OTP", "Need 6 digits", "Try again...");
-                    delay(1000);
-                    displayLargeOTP(otp, otp.length());
-                }
+    if (legacyCount > 0 && finger.fingerFastSearch() == FINGERPRINT_OK) {
+        for (int i = 0; i < legacyCount; i++) {
+            if (legacyIds[i] == finger.fingerID) {
+                matchedRef = "legacy:" + String(finger.fingerID);
+                score = finger.confidence;
+                return 1;
             }
-            // A, B, C, D keys are ignored
         }
-
-        delay(50);  // Small delay to avoid busy-waiting
     }
 
-    // Timeout
-    return "";
+    score = 0;
+    return 0;
+}
+
+void waitForFingerRemoved() {
+    unsigned long start = millis();
+    while (finger.getImage() != FINGERPRINT_NOFINGER && millis() - start < 3000) {
+        delay(100);
+    }
 }
 
 
 // ============================================================
-// SERVER COMMUNICATION FUNCTIONS
+// SERVER COMMUNICATION
 // ============================================================
 
-bool verifyFingerprintOnServer(String staffId, int fingerprintId, String plate, String eventType) {
-    /*
-     * Sends fingerprint verification result to the hosted server.
-     * The R307 sensor does the actual matching locally.
-     * We just tell the server which template ID matched.
-     */
-    HTTPClient http;
-    String url = String(SERVER_URL) + "/api/verify_fingerprint";
-
-    http.begin(url);
-    // Render's free tier spins down when idle and can take 30-60s to wake
-    // back up on the next request - the default ~5s HTTPClient timeout
-    // would wrongly read that as a failure (and for verification calls,
-    // wrongly deny a legitimate staff member).
-    http.setTimeout(30000);
-    http.addHeader("Content-Type", "application/json");
+void beginServerRequest(HTTPClient& http, String path, uint16_t timeoutMs) {
+    http.begin(String(SERVER_URL) + path);
+    // Render's free tier can take 30-60 s to wake from idle; the default
+    // ~5 s timeout would wrongly read that as a failure.
+    http.setTimeout(timeoutMs);
     http.addHeader("X-Device-Key", DEVICE_API_KEY);
+    http.addHeader("X-Device-Name", "gate");
+}
 
-    JsonDocument doc;
-    doc["staff_id"] = staffId;
-    doc["fingerprint_template_id"] = String(fingerprintId);
-    doc["plate_number"] = plate;
-    doc["event_type"] = eventType;
-
+// POSTs JSON and returns the response's "success" field (false on any error).
+bool postJson(String path, JsonDocument& doc, String* messageOut = nullptr) {
+    HTTPClient http;
+    beginServerRequest(http, path, 30000);
+    http.addHeader("Content-Type", "application/json");
     String body;
     serializeJson(doc, body);
 
     Serial.print("[HTTP] POST ");
-    Serial.println(url);
-
+    Serial.println(path);
     int httpCode = http.POST(body);
-
-    if (httpCode == 200) {
+    bool success = false;
+    if (httpCode > 0) {
         String response = http.getString();
-        Serial.print("[HTTP] Response: ");
+        Serial.print("[HTTP] ");
+        Serial.print(httpCode);
+        Serial.print(" ");
         Serial.println(response);
-
         JsonDocument respDoc;
-        deserializeJson(respDoc, response);
-        bool success = respDoc["success"].as<bool>();
-
-        http.end();
-        return success;
+        if (!deserializeJson(respDoc, response)) {
+            success = httpCode == 200 && respDoc["success"].as<bool>();
+            if (messageOut) *messageOut = respDoc["message"].as<String>();
+        }
+    } else {
+        Serial.print("[HTTP] Error: ");
+        Serial.println(httpCode);
     }
-
-    Serial.print("[HTTP] Error: ");
-    Serial.println(httpCode);
     http.end();
-    return false;
+    return success;
 }
 
-bool verifyOTPOnServer(String staffId, String otpCode, String plate, String eventType) {
-    /*
-     * Sends the entered OTP to the hosted server for verification.
-     * The server checks if the OTP is valid, belongs to the right
-     * staff account, and hasn't expired.
-     */
-    HTTPClient http;
-    String url = String(SERVER_URL) + "/api/verify_otp";
+/*
+ * Downloads the vehicle owner's fingerprint templates. Also tells the
+ * server the gate is now waiting for a fingerprint (for the live monitor).
+ */
+bool fetchOwnerTemplates() {
+    templateCount = 0;
+    legacyCount = 0;
 
-    http.begin(url);
-    // Render's free tier spins down when idle and can take 30-60s to wake
-    // back up on the next request - the default ~5s HTTPClient timeout
-    // would wrongly read that as a failure (and for verification calls,
-    // wrongly deny a legitimate staff member).
-    http.setTimeout(30000);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("X-Device-Key", DEVICE_API_KEY);
+    HTTPClient http;
+    beginServerRequest(http, "/api/device/users/" + pendingStaffId + "/fingerprints?plate=" +
+                       pendingPlate + "&event_type=" + pendingEventType, 30000);
+    int httpCode = http.GET();
+    if (httpCode != 200) {
+        Serial.print("[FP] Could not download templates. HTTP: ");
+        Serial.println(httpCode);
+        http.end();
+        return false;
+    }
 
     JsonDocument doc;
-    doc["staff_id"] = staffId;
+    DeserializationError err = deserializeJson(doc, http.getStream());
+    http.end();
+    if (err) {
+        Serial.print("[FP] Bad template response: ");
+        Serial.println(err.c_str());
+        return false;
+    }
+
+    for (JsonObject item : doc["templates"].as<JsonArray>()) {
+        if (templateCount >= MAX_TEMPLATES) break;
+        const char* encoded = item["template"];
+        if (!encoded) continue;
+        size_t decodedLen = 0;
+        int rc = mbedtls_base64_decode(templates[templateCount], MAX_TEMPLATE_BYTES, &decodedLen,
+                                       (const unsigned char*)encoded, strlen(encoded));
+        if (rc != 0 || decodedLen == 0) continue;
+        templateLengths[templateCount] = decodedLen;
+        templateIds[templateCount] = item["id"] | 0;
+        templateCount++;
+    }
+    for (int id : doc["legacy_ids"].as<JsonArray>()) {
+        if (legacyCount < MAX_LEGACY_IDS) legacyIds[legacyCount++] = id;
+    }
+
+    Serial.print("[FP] Owner templates: ");
+    Serial.print(templateCount);
+    Serial.print(" (+");
+    Serial.print(legacyCount);
+    Serial.println(" on gate sensor)");
+    return true;
+}
+
+bool reportFingerprintResult(bool matched, String matchedRef, int score) {
+    JsonDocument doc;
+    doc["staff_id"] = pendingStaffId;
+    doc["plate_number"] = pendingPlate;
+    doc["event_type"] = pendingEventType;
+    doc["matched"] = matched;
+    doc["template_ref"] = matchedRef;
+    doc["score"] = score;
+    return postJson("/api/verify_fingerprint", doc);
+}
+
+bool verifyOTPOnServer(String otpCode, String& message) {
+    JsonDocument doc;
+    doc["staff_id"] = pendingStaffId;
     doc["otp_code"] = otpCode;
-    doc["plate_number"] = plate;
-    doc["event_type"] = eventType;
-
-    String body;
-    serializeJson(doc, body);
-
-    Serial.print("[HTTP] POST ");
-    Serial.println(url);
-
-    int httpCode = http.POST(body);
-
-    if (httpCode == 200) {
-        String response = http.getString();
-        Serial.print("[HTTP] Response: ");
-        Serial.println(response);
-
-        JsonDocument respDoc;
-        deserializeJson(respDoc, response);
-        bool success = respDoc["success"].as<bool>();
-        String message = respDoc["message"].as<String>();
-
-        http.end();
-
-        if (success) {
-            return true;
-        } else {
-            // Show the server's error message on OLED
-            displayMessage("OTP FAILED", message, "");
-            return false;
-        }
-    }
-
-    Serial.print("[HTTP] Error: ");
-    Serial.println(httpCode);
-    http.end();
-    return false;
+    doc["plate_number"] = pendingPlate;
+    doc["event_type"] = pendingEventType;
+    return postJson("/api/verify_otp", doc, &message);
 }
 
-void logEventToServer(String staffId, String plate, String method,
-                      String eventType, String status, String details) {
-    /*
-     * Sends a general event log to the hosted server.
-     * Used for failed attempts, timeouts, etc.
-     */
-    HTTPClient http;
-    String url = String(SERVER_URL) + "/api/log_event";
-
-    http.begin(url);
-    // Render's free tier spins down when idle and can take 30-60s to wake
-    // back up on the next request - the default ~5s HTTPClient timeout
-    // would wrongly read that as a failure (and for verification calls,
-    // wrongly deny a legitimate staff member).
-    http.setTimeout(30000);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("X-Device-Key", DEVICE_API_KEY);
-
+void logEventToServer(String method, String status, String details) {
     JsonDocument doc;
-    doc["staff_id"] = staffId;
-    doc["plate_number"] = plate;
+    doc["staff_id"] = pendingStaffId;
+    doc["plate_number"] = pendingPlate;
     doc["method"] = method;
-    doc["event_type"] = eventType;
+    doc["event_type"] = pendingEventType;
     doc["status"] = status;
     doc["details"] = details;
-
-    String body;
-    serializeJson(doc, body);
-
-    int httpCode = http.POST(body);
-    http.end();
-
-    Serial.print("[LOG] Event logged. HTTP: ");
-    Serial.println(httpCode);
+    postJson("/api/log_event", doc);
 }
 
-bool pushFingerprintIdToServer(String staffId, int fingerprintId) {
-    /*
-     * Tells the hosted server which template ID a staff member was just
-     * enrolled at, so the admin-created record and the physically-enrolled
-     * fingerprint are linked.
-     */
+void sendHeartbeat() {
+    // Short timeout: this runs while idle and must not hold up an incoming
+    // vehicle alert for long. Regular pings also keep Render's free tier
+    // awake, so verification calls don't hit a cold start.
     HTTPClient http;
-    String url = String(SERVER_URL) + "/api/device/staff/" + staffId + "/fingerprint";
-
-    http.begin(url);
-    // Render's free tier spins down when idle and can take 30-60s to wake
-    // back up on the next request - the default ~5s HTTPClient timeout
-    // would wrongly read that as a failure (and for verification calls,
-    // wrongly deny a legitimate staff member).
-    http.setTimeout(30000);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("X-Device-Key", DEVICE_API_KEY);
-
-    JsonDocument doc;
-    doc["fingerprint_template_id"] = String(fingerprintId);
-
-    String body;
-    serializeJson(doc, body);
-
-    int httpCode = http.POST(body);
-    bool ok = (httpCode == 200);
-
-    Serial.print("[ENROLL] Server sync HTTP: ");
-    Serial.println(httpCode);
+    beginServerRequest(http, "/api/device/heartbeat", 3000);
+    int httpCode = http.POST("");
     http.end();
-    return ok;
+    Serial.print("[HEARTBEAT] HTTP: ");
+    Serial.println(httpCode);
 }
 
 
 // ============================================================
-// LOCAL WEB SERVER ROUTES (receives alerts from Raspberry Pi)
+// LOCAL WEB SERVER ROUTES (called by the ANPR computer)
 // ============================================================
 
 void handleStaffAlert() {
     /*
-     * Called by the Raspberry Pi when ANPR detects a staff vehicle.
-     * The Pi already checked with the hosted server and got the staff info.
-     * Now it tells the ESP32 to alert the guard and start verification.
-     *
-     * Expected request from Pi:
-     *   GET /staff_alert?staff_id=STF001&name=Dr.+Okonkwo&plate=AAB-234GH
-     *       &fingerprint_id=1&event_type=EXIT
+     * Called when ANPR reads a registered vehicle's plate.
+     *   GET /staff_alert?staff_id=STF001&name=Dr.+Okonkwo&plate=AAB-234GH&event_type=EXIT
      */
     if (awaitingVerification) {
         localServer.send(409, "application/json",
@@ -745,46 +593,35 @@ void handleStaffAlert() {
         return;
     }
 
-    // Store the pending verification details
     pendingStaffId = localServer.arg("staff_id");
     pendingOwnerName = localServer.arg("name");
     pendingPlate = localServer.arg("plate");
-    pendingFingerprintId = localServer.arg("fingerprint_id").toInt();
-    pendingEventType = localServer.hasArg("event_type") ?
-                       localServer.arg("event_type") : "EXIT";
+    pendingEventType = localServer.hasArg("event_type") ? localServer.arg("event_type") : "EXIT";
 
-    // Activate verification mode
     awaitingVerification = true;
+    phase = PHASE_LOAD_TEMPLATES;
+    otpAttempts = 0;
     verificationStartTime = millis();
 
     Serial.println("\n========================================");
-    Serial.println("[ALERT] STAFF VEHICLE DETECTED");
+    Serial.println("[ALERT] REGISTERED VEHICLE DETECTED");
     Serial.print("  Plate: ");
     Serial.println(pendingPlate);
     Serial.print("  Owner: ");
     Serial.println(pendingOwnerName);
     Serial.print("  Staff ID: ");
     Serial.println(pendingStaffId);
-    Serial.print("  FP ID: ");
-    Serial.println(pendingFingerprintId);
     Serial.println("========================================");
 
-    // Alert the guard
-    beepAlert();
-    displayMessage("STAFF VEHICLE",
-                   pendingPlate,
-                   pendingOwnerName);
-
-    // Respond to the Pi
+    // Respond first - the template download can take a while.
     localServer.send(200, "application/json",
         "{\"status\":\"ALERT_SENT\",\"message\":\"Guard notified\"}");
+
+    beepAlert();
+    displayMessage("STAFF VEHICLE", pendingPlate, pendingOwnerName);
 }
 
 void handleStatus() {
-    /*
-     * Simple status endpoint so the Pi can check if the ESP32 is alive.
-     * GET /status
-     */
     String status = awaitingVerification ? "BUSY" : "READY";
     String response = "{\"status\":\"" + status + "\",\"ip\":\"" +
                       WiFi.localIP().toString() + "\"}";
@@ -793,63 +630,18 @@ void handleStatus() {
 
 void handleOpenGate() {
     /*
-     * Called by the Raspberry Pi when ANPR reads a plate that isn't a
-     * staff vehicle - no owner/OTP verification needed, just open up.
-     * GET /open_gate
+     * Called when ANPR reads a plate that isn't registered (visitor) - no
+     * verification needed, just open up.
      */
     if (awaitingVerification) {
         localServer.send(409, "application/json",
-            "{\"error\":\"Already processing a staff vehicle verification\"}");
+            "{\"error\":\"Already processing a registered vehicle\"}");
         return;
     }
 
-    Serial.println("[GATE] Non-staff vehicle - opening directly.");
-    localServer.send(200, "application/json",
-        "{\"status\":\"OPENING\"}");
+    Serial.println("[GATE] Visitor vehicle - opening directly.");
+    localServer.send(200, "application/json", "{\"status\":\"OPENING\"}");
     openGate();
-}
-
-void handleEnrollRequest() {
-    /*
-     * Triggered by the admin to enroll a new fingerprint for a staff member
-     * already created in the hosted admin panel.
-     * GET /enroll?id=5&staff_id=STAFF004
-     */
-    if (!localServer.hasArg("id") || !localServer.hasArg("staff_id")) {
-        localServer.send(400, "application/json",
-            "{\"error\":\"Missing fingerprint id or staff_id\"}");
-        return;
-    }
-
-    int fpId = localServer.arg("id").toInt();
-    String staffId = localServer.arg("staff_id");
-    localServer.send(200, "application/json",
-        "{\"status\":\"ENROLLING\",\"message\":\"Place finger on sensor\"}");
-
-    // This blocks until enrollment is complete
-    bool success = enrollFingerprint(fpId);
-
-    if (success) {
-        Serial.print("[ENROLL] Success at ID ");
-        Serial.println(fpId);
-
-        // Link this template ID to the staff record on the hosted server.
-        bool synced = pushFingerprintIdToServer(staffId, fpId);
-        if (!synced) {
-            Serial.println("[ENROLL] WARNING: fingerprint enrolled locally but");
-            Serial.println("         the server was not updated. Retry the sync.");
-            displayMessage("ENROLLED LOCALLY", "Server sync failed", "Retry later");
-            beepError();
-            delay(2000);
-        }
-    } else {
-        Serial.println("[ENROLL] Failed.");
-        displayMessage("ENROLL FAILED", "Try again", "");
-        beepError();
-    }
-
-    delay(2000);
-    showIdleScreen();
 }
 
 
@@ -857,186 +649,148 @@ void handleEnrollRequest() {
 // MAIN VERIFICATION LOOP
 // ============================================================
 
-void processVerification() {
-    /*
-     * Called repeatedly from loop() while awaitingVerification is true.
-     * Checks for fingerprint scan or keypad input.
-     * The guard has approached the vehicle and is facilitating this.
-     */
+void endVerification() {
+    awaitingVerification = false;
+    templateCount = 0;
+    legacyCount = 0;
+    lastHeartbeat = millis();
+    showIdleScreen();
+}
 
-    // Check timeout
+void grantOwnerAccess(String matchedRef, int score) {
+    Serial.print("[VERIFY] Owner verified (");
+    Serial.print(matchedRef);
+    Serial.println(").");
+    displayMessage("OWNER VERIFIED", pendingOwnerName, "Confirming...");
+
+    if (reportFingerprintResult(true, matchedRef, score)) {
+        openGate();
+    } else {
+        displayMessage("SERVER ERROR", "Could not confirm", "Contact admin");
+        beepError();
+        delay(3000);
+    }
+    endVerification();
+}
+
+// Collects an OTP starting from the first digit pressed. Returns "" if
+// the entry was abandoned or timed out.
+String readOTP(char firstDigit) {
+    String otp = String(firstDigit);
+    displayLargeOTP(otp);
+    unsigned long start = millis();
+
+    while (millis() - start < OTP_ENTRY_TIMEOUT_MS) {
+        char key = keypad.getKey();
+        if (key >= '0' && key <= '9' && otp.length() < OTP_LENGTH) {
+            otp += key;
+            displayLargeOTP(otp);
+            if (otp.length() == OTP_LENGTH) {
+                delay(300);  // let the driver see the last digit
+                return otp;
+            }
+        } else if (key == '*') {
+            otp = "";
+            displayLargeOTP(otp);
+        } else if (key == '#' && otp.length() == OTP_LENGTH) {
+            return otp;
+        }
+        delay(30);
+    }
+    return "";
+}
+
+void processVerification() {
     if (millis() - verificationStartTime > VERIFICATION_TIMEOUT_MS) {
-        Serial.println("[VERIFY] Timeout - no verification received.");
+        Serial.println("[VERIFY] Timeout.");
         displayMessage("TIMEOUT", "No verification", "Gate stays closed");
         beepError();
-
-        logEventToServer(pendingStaffId, pendingPlate, "NONE",
-                         pendingEventType, "FAIL", "Verification timeout");
-
-        awaitingVerification = false;
+        logEventToServer("none", "fail", "Verification timeout");
         delay(3000);
-        showIdleScreen();
+        endVerification();
         return;
     }
 
-    // After the initial alert, show the verification prompt
-    static bool promptShown = false;
-    if (!promptShown) {
-        delay(2000);  // Let the guard read the alert first
-        displayMessage("VERIFY DRIVER",
-                       "Finger=Owner",
-                       "0-9=Enter OTP");
-        promptShown = true;
-    }
-
-    // --- Check for fingerprint ---
-    int fpResult = scanFingerprint();
-
-    if (fpResult >= 0) {
-        // A fingerprint was detected and matched a template
-        Serial.print("[VERIFY] Fingerprint matched ID: ");
-        Serial.println(fpResult);
-
-        /* --- Temporary fingerprint feature (disabled) ---
-        if (temporaryFingerprintActive && fpResult == TEMP_FINGERPRINT_ID &&
-            pendingStaffId == temporaryFingerprintStaffId &&
-            pendingPlate == temporaryFingerprintPlate) {
-            Serial.println("[VERIFY] Temporary fingerprint recognized.");
-            logEventToServer(pendingStaffId, pendingPlate, "TEMP_FINGERPRINT",
-                             pendingEventType, "SUCCESS", "Temporary fingerprint used within 48-hour window");
-            displayMessage("TEMP FP VERIFIED", "Access granted", "Opening gate...");
-            openGate();
-            promptShown = false;
-            awaitingVerification = false;
-            showIdleScreen();
-            return;
-        }
-        --- end temporary fingerprint feature --- */
-
-        if (fpResult == pendingFingerprintId) {
-            // It's the owner!
-            Serial.println("[VERIFY] Owner verified by fingerprint.");
-            displayMessage("OWNER VERIFIED", pendingOwnerName, "Opening gate...");
-
-            bool serverOk = verifyFingerprintOnServer(
-                pendingStaffId, fpResult, pendingPlate, pendingEventType);
-
-            if (serverOk) {
-                openGate();
-            } else {
-                // Server rejected but fingerprint matched locally
-                // This shouldn't happen normally, but handle it
-                displayMessage("SERVER ERROR", "Contact admin", "");
-                beepError();
-                delay(3000);
-            }
+    // --- 1. Get the owner's fingerprints ---
+    if (phase == PHASE_LOAD_TEMPLATES) {
+        displayMessage("STAFF VEHICLE", pendingPlate, "Loading owner...");
+        bool loaded = fetchOwnerTemplates();
+        if (loaded && templateCount + legacyCount > 0) {
+            phase = PHASE_FINGERPRINT;
+            showFingerPrompt();
         } else {
-            // Fingerprint matched someone, but not the car owner
-            Serial.println("[VERIFY] Fingerprint does not match owner.");
-            displayMessage("NOT THE OWNER", "Use OTP instead", "");
-            beepError();
-
-            logEventToServer(pendingStaffId, pendingPlate, "FINGERPRINT",
-                             pendingEventType, "FAIL",
-                             "FP ID " + String(fpResult) + " != owner ID " +
-                             String(pendingFingerprintId));
-
-            delay(2000);
-            displayMessage("VERIFY DRIVER",
-                           "Finger=Owner",
-                           "0-9=Enter OTP");
-        }
-
-        promptShown = false;
-        if (fpResult == pendingFingerprintId) {
-            awaitingVerification = false;
-            showIdleScreen();
+            // No fingerprint on file (or server unreachable): OTP only.
+            phase = PHASE_OTP;
+            displayMessage(loaded ? "NO FINGERPRINT" : "FP UNAVAILABLE", "on file for owner", "Enter OTP");
         }
         return;
     }
 
-    // --- Check for keypad input (OTP) ---
+    // --- 2. Fingerprint always comes first ---
+    String matchedRef;
+    int score = 0;
+    int fingerResult = checkDriverFinger(matchedRef, score);
+
+    if (fingerResult == 1) {
+        grantOwnerAccess(matchedRef, score);
+        return;
+    }
+
+    if (fingerResult == 0) {
+        Serial.println("[VERIFY] Finger is not the owner's.");
+        beepError();
+        if (phase == PHASE_FINGERPRINT) {
+            // First non-owner scan: record it and move on to the OTP step.
+            displayMessage("NOT THE OWNER", "Recording...", "");
+            reportFingerprintResult(false, "", 0);
+            phase = PHASE_OTP;
+        }
+        showOtpPrompt();
+        waitForFingerRemoved();
+        return;
+    }
+
+    // The keypad only becomes active once a fingerprint has been tried.
+    if (phase != PHASE_OTP) return;
+
+    // --- 3. OTP for a driver who isn't the owner ---
     char key = keypad.getKey();
+    if (!(key >= '0' && key <= '9')) return;
 
-    if (key && key >= '0' && key <= '9') {
-        // First digit of OTP entered — collect the rest
-        Serial.println("[VERIFY] OTP entry started.");
-
-        // Put the first digit into the OTP string
-        String otp = String(key);
-        displayLargeOTP(otp, 1);
-
-        // Read the remaining digits
-        unsigned long otpStartTime = millis();
-        while (otp.length() < OTP_LENGTH &&
-               (millis() - otpStartTime) < VERIFICATION_TIMEOUT_MS) {
-
-            char nextKey = keypad.getKey();
-
-            if (nextKey) {
-                if (nextKey >= '0' && nextKey <= '9') {
-                    otp += nextKey;
-                    displayLargeOTP(otp, otp.length());
-
-                } else if (nextKey == '*') {
-                    // Clear and restart
-                    otp = "";
-                    displayLargeOTP(otp, 0);
-
-                } else if (nextKey == '#' && otp.length() == OTP_LENGTH) {
-                    break;  // Confirm
-                }
-            }
-
-            // Auto-submit when 6 digits reached
-            if (otp.length() == OTP_LENGTH) {
-                delay(300);
-                break;
-            }
-
-            delay(50);
-        }
-
-        if (otp.length() == OTP_LENGTH) {
-            Serial.print("[VERIFY] OTP entered: ");
-            Serial.println(otp);
-
-            displayMessage("VERIFYING OTP", otp, "Please wait...");
-
-            bool serverOk = verifyOTPOnServer(
-                pendingStaffId, otp, pendingPlate, pendingEventType);
-
-            if (serverOk) {
-                Serial.println("[VERIFY] OTP verified! Non-owner access granted.");
-                displayMessage("OTP VERIFIED", "Opening gate...", "");
-                // enrollTemporaryFingerprint();  // temp fingerprint feature disabled
-                delay(500);
-                openGate();
-            } else {
-                Serial.println("[VERIFY] OTP rejected.");
-                displayMessage("ACCESS DENIED", "Invalid or expired", "OTP");
-                beepError();
-                delay(3000);
-                displayMessage("VERIFY DRIVER",
-                               "Finger=Owner",
-                               "0-9=Enter OTP");
-            }
-        } else {
-            // OTP entry timed out or was incomplete
-            Serial.println("[VERIFY] OTP entry incomplete.");
-            displayMessage("OTP INCOMPLETE", "Try again", "");
-            delay(2000);
-            displayMessage("VERIFY DRIVER",
-                           "Finger=Owner",
-                           "0-9=Enter OTP");
-        }
-
-        promptShown = false;
-        if (otp.length() == OTP_LENGTH) {
-            awaitingVerification = false;
-            showIdleScreen();
-        }
+    String otp = readOTP(key);
+    if (otp.length() != OTP_LENGTH) {
+        displayMessage("OTP INCOMPLETE", "Try again", "");
+        delay(1500);
+        showOtpPrompt();
+        return;
     }
+
+    displayMessage("VERIFYING OTP", otp, "Please wait...");
+    String message;
+    if (verifyOTPOnServer(otp, message)) {
+        Serial.println("[VERIFY] OTP accepted.");
+        displayMessage("OTP VERIFIED", "Opening gate...", "");
+        delay(500);
+        openGate();
+        endVerification();
+        return;
+    }
+
+    otpAttempts++;
+    Serial.print("[VERIFY] OTP rejected: ");
+    Serial.println(message);
+    beepError();
+    if (otpAttempts >= MAX_OTP_ATTEMPTS) {
+        displayMessage("ACCESS DENIED", "Too many attempts", "Gate stays closed");
+        logEventToServer("otp", "fail", "Verification failed: too many OTP attempts");
+        delay(3000);
+        endVerification();
+        return;
+    }
+    displayMessage("OTP REJECTED", message.length() ? message : "Invalid or expired",
+                   String(MAX_OTP_ATTEMPTS - otpAttempts) + " tries left");
+    delay(2500);
+    showOtpPrompt();
 }
 
 
@@ -1045,40 +799,31 @@ void processVerification() {
 // ============================================================
 
 void setup() {
-    // Serial monitor for debugging
     Serial.begin(115200);
     delay(1000);
     Serial.println("\n\n========================================");
     Serial.println("  SMART GATE SYSTEM - Starting up...");
     Serial.println("========================================\n");
 
-    // temporaryFingerprintStore.begin("temporary_fp", false);  // temp fingerprint feature disabled
-
-    // --- Initialize buzzer ---
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(BUZZER_PIN, LOW);
     Serial.println("[INIT] Buzzer: OK");
 
-    // --- Initialize OLED display ---
     Wire.begin(OLED_SDA, OLED_SCL);
     if (!display.begin(OLED_ADDR)) {
         Serial.println("[INIT] OLED: FAILED!");
-        // Continue anyway — system can work without display
     } else {
         Serial.println("[INIT] OLED: OK");
     }
     displayMessage("SMART GATE", "Starting up...", "");
 
-    // --- Initialize servo ---
     gateServo.attach(SERVO_PIN);
-    gateServo.write(0);  // Start in closed position
+    gateServo.write(0);
     Serial.println("[INIT] Servo: OK (closed position)");
 
-    // --- Initialize keypad ---
-    // Keypad library handles pin modes automatically
     Serial.println("[INIT] Keypad: OK");
 
-    // --- Connect to Wi-Fi ---
+    // --- Wi-Fi ---
     displayMessage("SMART GATE", "Connecting to", "Wi-Fi...");
     Serial.print("[WIFI] Connecting to ");
     Serial.print(WIFI_SSID);
@@ -1097,59 +842,47 @@ void setup() {
         Serial.println("\n[WIFI] Connected!");
         Serial.print("[WIFI] IP Address: ");
         Serial.println(WiFi.localIP());
-        Serial.print("[WIFI] Server: ");
-        Serial.println(SERVER_URL);
 
         if (MDNS.begin("verigate")) {
             Serial.println("[MDNS] Reachable at http://verigate.local");
         } else {
             Serial.println("[MDNS] Failed to start!");
         }
-
-        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-        Serial.print("[TIME] Synchronizing clock");
-        for (int timeAttempt = 0; timeAttempt < 20 && !clockIsValid(); timeAttempt++) {
-            delay(500);
-            Serial.print(".");
-        }
-        Serial.println(clockIsValid() ? " OK" : " FAILED");
-        // expireTemporaryFingerprintIfNeeded();  // temp fingerprint feature disabled
-
-        displayMessage("WIFI CONNECTED",
-                       WiFi.localIP().toString(),
-                       "");
+        displayMessage("WIFI CONNECTED", WiFi.localIP().toString(), "");
     } else {
         Serial.println("\n[WIFI] CONNECTION FAILED!");
-        Serial.println("       System will work offline (no server verification)");
         displayMessage("WIFI FAILED", "Offline mode", "Check credentials");
     }
 
-    // --- Initialize fingerprint sensor (after Wi-Fi so the system is up
-    //     and serving requests while this still runs underneath) ---
+    // --- Fingerprint sensor ---
     displayMessage("SMART GATE", "Checking", "fingerprint...");
     Serial1.begin(57600, SERIAL_8N1, FP_RX_PIN, FP_TX_PIN);
     finger.begin(57600);
 
     if (finger.verifyPassword()) {
-        Serial.print("[INIT] Fingerprint sensor: OK (");
-        finger.getTemplateCount();
-        Serial.print(finger.templateCount);
-        Serial.println(" templates stored)");
-        // loadTemporaryFingerprint();  // temp fingerprint feature disabled
+        if (finger.getParameters() == FINGERPRINT_OK && finger.packet_len >= 32) {
+            sensorPacketLength = finger.packet_len;
+        }
+        Serial.print("[INIT] Fingerprint sensor: OK (packet size ");
+        Serial.print(sensorPacketLength);
+        Serial.println(")");
     } else {
         Serial.println("[INIT] Fingerprint sensor: NOT FOUND!");
         Serial.println("       Check wiring: TX→GPIO18, RX→GPIO17");
     }
 
-    // --- Set up local web server routes ---
+    // --- Local web server routes ---
     localServer.on("/staff_alert", HTTP_GET, handleStaffAlert);
     localServer.on("/status", HTTP_GET, handleStatus);
     localServer.on("/open_gate", HTTP_GET, handleOpenGate);
-    localServer.on("/enroll", HTTP_GET, handleEnrollRequest);
     localServer.begin();
     Serial.println("[SERVER] Local web server started on port 80");
 
-    // --- Startup complete ---
+    if (WiFi.status() == WL_CONNECTED) {
+        sendHeartbeat();
+    }
+    lastHeartbeat = millis();
+
     delay(1000);
     beepSuccess();
     showIdleScreen();
@@ -1160,7 +893,6 @@ void setup() {
     Serial.println(WiFi.localIP());
     Serial.print("  Server:   ");
     Serial.println(SERVER_URL);
-    Serial.println("  Listening for Pi alerts on /staff_alert");
     Serial.println("========================================\n");
 }
 
@@ -1170,18 +902,19 @@ void setup() {
 // ============================================================
 
 void loop() {
-    // Always handle incoming HTTP requests from the Pi
     localServer.handleClient();
 
-    // If a staff vehicle has been detected, run verification
     if (awaitingVerification) {
         processVerification();
+    } else if (WiFi.status() == WL_CONNECTED && millis() - lastHeartbeat > HEARTBEAT_INTERVAL_MS) {
+        lastHeartbeat = millis();
+        sendHeartbeat();
     }
 
     // Check Wi-Fi connection and reconnect if needed
     static unsigned long lastWifiCheck = 0;
     static bool wifiWasConnected = true;
-    if (millis() - lastWifiCheck > 10000) {  // Check every 10 seconds
+    if (millis() - lastWifiCheck > 10000) {
         lastWifiCheck = millis();
         bool wifiConnected = (WiFi.status() == WL_CONNECTED);
 
@@ -1190,13 +923,12 @@ void loop() {
             WiFi.reconnect();
         }
 
-        // Refresh the OLED the moment connectivity actually changes, so the
-        // guard sees it flip live instead of only at the next staff alert.
+        // Refresh the OLED the moment connectivity changes.
         if (wifiConnected != wifiWasConnected && !awaitingVerification) {
             showIdleScreen();
         }
         wifiWasConnected = wifiConnected;
     }
 
-    delay(10);  // Small delay to prevent watchdog timer reset
+    delay(10);
 }

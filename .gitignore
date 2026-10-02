@@ -11,32 +11,19 @@ venv/
 backend/data/smart_gate.db
 backend/data/smart_gate.db.bak*
 
-# Legacy local JSON data store (kept only for one-time migration; don't
-# commit real staff data)
-backend/data/*.json
-backend/data/*.json.bak
-
 # Raw Postgres dumps pulled from Render - contains real staff PII
 # (phone numbers, emails, password hashes), never commit
 *.dump
 
-backend/set_staff_name.py
-backend/set_staff_password.py
-backend/set_staff_email.py
-backend/rotate_admin_password.py
-backend/sync_from_render_dump.py
 
 frontend/anpr.html
 frontend/js/anpr.js
 # Real Wi-Fi/API credentials for the ESP32 sketch - copy secrets.h.example
 # to secrets.h and fill in real values, never commit secrets.h itself
 esp32/smart_gate_esp32/secrets.h
-esp32/keypad_test/
-esp32/servo_test/
 
 # Test/demo images - not source, not needed in the repo
 anpr/test_images/
-presentation_images/
 anpr/test_accuracy_report.ipynb
 anpr/test_accuracy.py
 anpr/analysis_outputs/

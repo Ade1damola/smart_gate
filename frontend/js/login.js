@@ -25,7 +25,7 @@
 
     if (ok && data.success) {
       setToken(data.token);
-      window.location.href = data.role === "admin" ? "admin.html" : "dashboard.html";
+      window.location.href = "dashboard.html";
       return;
     }
 

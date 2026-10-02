@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gate Monitor</title>
+  <link rel="stylesheet" href="css/admin.css" />
+</head>
+<body data-area="admin" class="monitor-body">
+  <div class="monitor">
+    <header class="monitor-top">
+      <div class="title">
+        <span class="brand-mark">V</span>
+        <div><strong>VERIGATE &middot; LIVE GATE MONITOR</strong><br /><span id="connection">Connecting...</span></div>
+      </div>
+      <div class="monitor-devices">
+        <span class="device-chip" id="chip-camera"><span class="dot"></span>Camera</span>
+        <span class="device-chip" id="chip-gate"><span class="dot"></span>Gate controller</span>
+      </div>
+      <div class="monitor-clock" id="clock">--:--:--</div>
+      <button class="button button-small" id="fullscreen-btn" type="button">Full screen</button>
+    </header>
+
+    <div class="monitor-main">
+      <div class="m-panel m-camera" id="camera">
+        <div class="placeholder" id="camera-placeholder">Waiting for the camera feed...<br /><small>Start the ANPR live capture on the gate computer.</small></div>
+        <img id="camera-img" alt="Live gate camera" hidden />
+        <div class="m-camera-badge"><span class="live-dot stale" id="live-dot"></span><span id="camera-label">NO FEED</span></div>
+      </div>
+
+      <div class="m-panel m-session" id="session">
+        <div class="m-state" id="state">
+          <div class="label" id="state-label">Gate status</div>
+          <div class="headline" id="state-headline">Waiting for vehicle</div>
+          <div class="sub" id="state-sub">Camera is watching for plates</div>
+        </div>
+        <div class="m-session-body" id="session-body"></div>
+      </div>
+    </div>
+
+    <div class="monitor-bottom">
+      <div class="m-panel m-stats" id="stats"></div>
+      <div class="m-panel m-feed" id="feed"></div>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/gate-events.js"></script>
+  <script src="js/monitor.js"></script>
+</body>
+</html>

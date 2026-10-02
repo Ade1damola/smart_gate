@@ -6,20 +6,45 @@ password_reset_otps.json / logs.json files, now backed by a real database
 """
 
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import deferred
 
 db = SQLAlchemy()
 
+# Who can be registered. Not everyone with a vehicle on campus is staff -
+# permanent residents and shop/business owners are registered the same way.
+USER_CATEGORIES = {
+    "staff": "Staff",
+    "resident": "Permanent resident",
+    "business": "Shop / business owner",
+    "other": "Other",
+}
+
 
 class Staff(db.Model):
+    """A registered vehicle owner (staff, resident, shop owner...).
+
+    The table keeps its original "staff" name so existing databases don't
+    need a rename migration; staff_id holds the university-assigned ID.
+    """
+
     __tablename__ = "staff"
 
     staff_id = db.Column(db.String(32), primary_key=True)
     name = db.Column(db.String(120), nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
+    # Legacy: template slots on the gate sensor's own library, from before
+    # templates moved to the server (see FingerprintTemplate).
     fingerprint_template_id = db.Column(db.String(32), nullable=True, default="")
     plate_number = db.Column(db.String(32), nullable=True, default="")
     phone_number = db.Column(db.String(32), nullable=False, default="")
     email = db.Column(db.String(255), nullable=True, default="")
+    category = db.Column(db.String(32), nullable=True, default="staff")
+    department = db.Column(db.String(160), nullable=True, default="")
+    # Image blobs are deferred so listing users doesn't load every photo;
+    # the *_type column doubles as the "has a photo" flag.
+    passport_photo = deferred(db.Column(db.LargeBinary, nullable=True))
+    passport_photo_type = db.Column(db.String(32), nullable=True)
+    created_time = db.Column(db.String(32), nullable=True)
 
     def to_dict(self):
         return {
@@ -30,6 +55,21 @@ class Staff(db.Model):
             "plate_number": self.plate_number or "",
             "phone_number": self.phone_number or "",
             "email": self.email or "",
+        }
+
+    def to_admin_dict(self):
+        """Profile as shown to admins - never includes the password hash."""
+        return {
+            "staff_id": self.staff_id,
+            "name": self.name,
+            "category": self.category or "staff",
+            "category_label": USER_CATEGORIES.get(self.category or "staff", "Other"),
+            "department": self.department or "",
+            "email": self.email or "",
+            "phone_number": self.phone_number or "",
+            "plate_number": self.plate_number or "",
+            "has_photo": bool(self.passport_photo_type),
+            "created_time": self.created_time or "",
         }
 
 
@@ -60,6 +100,48 @@ class Vehicle(db.Model):
     vehicle_id = db.Column(db.String(32), primary_key=True)
     staff_id = db.Column(db.String(32), db.ForeignKey("staff.staff_id"), nullable=False)
     plate_number = db.Column(db.String(32), nullable=False)
+    make = db.Column(db.String(64), nullable=True, default="")
+    model = db.Column(db.String(64), nullable=True, default="")
+    colour = db.Column(db.String(32), nullable=True, default="")
+    features = db.Column(db.String(255), nullable=True, default="")
+    photo = deferred(db.Column(db.LargeBinary, nullable=True))
+    photo_type = db.Column(db.String(32), nullable=True)
+
+    def to_admin_dict(self):
+        return {
+            "vehicle_id": self.vehicle_id,
+            "plate_number": self.plate_number,
+            "make": self.make or "",
+            "model": self.model or "",
+            "colour": self.colour or "",
+            "features": self.features or "",
+            "has_photo": bool(self.photo_type),
+        }
+
+
+class FingerprintTemplate(db.Model):
+    """A fingerprint template exported from an R307-family sensor.
+
+    Enrolled from any spare sensor (e.g. one plugged into the admin's laptop)
+    and downloaded by the gate's ESP32 into its sensor for a 1:1 match, so
+    nothing has to be enrolled on the gate hardware itself.
+    """
+
+    __tablename__ = "fingerprint_templates"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    staff_id = db.Column(db.String(32), db.ForeignKey("staff.staff_id"), nullable=False)
+    label = db.Column(db.String(64), nullable=True, default="")
+    template = db.Column(db.LargeBinary, nullable=False)
+    created_time = db.Column(db.String(32), nullable=False)
+
+    def to_admin_dict(self):
+        return {
+            "id": self.id,
+            "label": self.label or "",
+            "size": len(self.template or b""),
+            "created_time": self.created_time,
+        }
 
 
 class Otp(db.Model):
@@ -117,4 +199,42 @@ class Log(db.Model):
             "timestamp": self.timestamp,
             "status": self.status,
             "details": self.details or "",
+        }
+
+
+class GateEvent(db.Model):
+    """Live feed of everything happening at the gate, for the admin monitor.
+
+    Unlike Log (the per-user access audit trail), this also covers visitor
+    vehicles and the intermediate steps of a verification, so the monitor
+    can show a gate session as it unfolds.
+
+    kind is one of: detection, awaiting_fingerprint, fingerprint, otp,
+    timeout, note.
+    """
+
+    __tablename__ = "gate_events"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    timestamp = db.Column(db.String(32), nullable=False)
+    kind = db.Column(db.String(32), nullable=False)
+    plate_number = db.Column(db.String(32), nullable=True, default="")
+    staff_id = db.Column(db.String(32), nullable=True)
+    event_type = db.Column(db.String(16), nullable=True, default="")
+    status = db.Column(db.String(16), nullable=True, default="")
+    message = db.Column(db.String(255), nullable=True, default="")
+    snapshot = deferred(db.Column(db.LargeBinary, nullable=True))
+    snapshot_type = db.Column(db.String(32), nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "timestamp": self.timestamp,
+            "kind": self.kind,
+            "plate_number": self.plate_number or "",
+            "staff_id": self.staff_id or "",
+            "event_type": self.event_type or "",
+            "status": self.status or "",
+            "message": self.message or "",
+            "has_snapshot": bool(self.snapshot_type),
         }

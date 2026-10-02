@@ -3,55 +3,283 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Admin</title>
-  <link rel="stylesheet" href="css/style.css" />
+  <title>Verigate Admin</title>
+  <link rel="stylesheet" href="css/admin.css" />
 </head>
-<body>
-  <div class="page">
-    <header class="topbar">
-      <div>
-        <h1 id="admin-name">--</h1>
-        <p class="subtitle">Admin</p>
+<body data-area="admin">
+  <div class="shell">
+    <nav class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-mark">V</span>
+        <div><strong>Verigate</strong><small>Security admin</small></div>
       </div>
-      <button id="logout-btn" class="btn btn-link">Log out</button>
-    </header>
-
-    <section class="card">
-      <h2>Add New Staff</h2>
-      <form id="add-staff-form">
-        <label for="staff_id">Staff ID</label>
-        <input type="text" id="staff_id" name="staff_id" required />
-
-        <label for="name">Full name</label>
-        <input type="text" id="name" name="name" required />
-
-        <label for="phone_number">Phone number</label>
-        <input type="tel" id="phone_number" name="phone_number" placeholder="+234..." pattern="^\+?[0-9]{7,15}$" title="Enter a valid phone number (digits only, optional leading +)" required />
-
-        <label for="email">Email address</label>
-        <input type="email" id="email" name="email" placeholder="staff@example.com" required />
-
-        <label for="plate_number">Plate number</label>
-        <input type="text" id="plate_number" name="plate_number" required />
-
-        <label for="fingerprint_template_id">Fingerprint template ID</label>
-        <input type="text" id="fingerprint_template_id" name="fingerprint_template_id" required />
-
-        <p id="add-staff-error" class="error-message" hidden></p>
-
-        <button type="submit" class="btn btn-primary btn-large">Add Staff</button>
-      </form>
-
-      <div id="add-staff-result" class="otp-result" hidden>
-        <p class="otp-label">Staff added. Share this default password with them:</p>
-        <p id="default-password" class="otp-code" style="font-size: 1.5rem;">------</p>
-        <p class="subtitle">They should log in and use "Forgot password?" to set their own password.</p>
+      <a href="#overview" class="nav-link" data-nav="overview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+        Overview
+      </a>
+      <a href="#users" class="nav-link" data-nav="users">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-7 7-7s7 3 7 7"/><path d="M17 11a3 3 0 1 0 0-6M22 21c0-3-2-5.5-5-6"/></svg>
+        Registered users
+      </a>
+      <a href="#register" class="nav-link" data-nav="register">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="8" r="4"/><path d="M3 21c0-4 3-7 7-7 1.5 0 2.8.4 4 1"/><path d="M19 14v6M16 17h6"/></svg>
+        Register user
+      </a>
+      <a href="#logs" class="nav-link" data-nav="logs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        Access log
+      </a>
+      <a href="#detections" class="nav-link" data-nav="detections">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="7" y="9" width="10" height="6" rx="1"/></svg>
+        Camera detections
+      </a>
+      <a href="monitor.html" class="nav-link" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        Live monitor &#8599;
+      </a>
+      <div class="nav-spacer"></div>
+      <div class="sidebar-footer">
+        <span id="admin-name">--</span><br />
+        <button id="logout-btn" type="button">Sign out</button>
       </div>
-    </section>
+    </nav>
 
+    <main class="main">
+      <!-- ============ OVERVIEW ============ -->
+      <section data-view="overview" hidden>
+        <div class="view-head">
+          <div>
+            <h1>Overview</h1>
+            <p class="muted">Today at the gate. Updates automatically.</p>
+          </div>
+          <a href="monitor.html" target="_blank" rel="noopener" class="button button-primary">Open live monitor</a>
+        </div>
+
+        <div class="stat-grid" id="stat-grid"></div>
+
+        <div class="overview-grid">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Recent gate activity</h2>
+              <a href="#detections" class="button button-small">All detections</a>
+            </div>
+            <ul class="event-list" id="overview-events"><li class="empty">Loading...</li></ul>
+          </div>
+          <div>
+            <div class="panel">
+              <div class="panel-head">
+                <h2>Gate camera</h2>
+                <span class="pill" id="camera-age">--</span>
+              </div>
+              <div class="camera-preview" id="overview-camera">No camera feed yet</div>
+            </div>
+            <div class="panel">
+              <h2 style="margin-bottom: 8px;">Devices</h2>
+              <ul class="device-list" id="device-list"></ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ USERS ============ -->
+      <section data-view="users" hidden>
+        <div class="view-head">
+          <div>
+            <h1>Registered users</h1>
+            <p class="muted">Staff, residents and business owners with vehicles on the platform.</p>
+          </div>
+          <a href="#register" class="button button-primary">+ Register user</a>
+        </div>
+        <div class="panel">
+          <div class="toolbar">
+            <input type="search" id="user-search" placeholder="Search by name, ID, department, plate, car..." />
+            <select id="user-category"><option value="">All categories</option></select>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>User</th><th>Category</th><th>Department / address</th><th>Vehicle</th><th>Fingerprints</th></tr>
+              </thead>
+              <tbody id="user-rows"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ USER DETAIL ============ -->
+      <section data-view="user" hidden>
+        <p style="margin: 0 0 12px;"><a href="#users">&larr; All users</a></p>
+        <div id="user-detail"></div>
+      </section>
+
+      <!-- ============ REGISTER / EDIT ============ -->
+      <section data-view="register" hidden>
+        <div class="view-head">
+          <div>
+            <h1 id="form-title">Register user</h1>
+            <p class="muted" id="form-subtitle">Anyone with a vehicle who is permanently on campus: staff, residents, shop owners.</p>
+          </div>
+        </div>
+
+        <div id="register-result" class="panel result-card" hidden></div>
+
+        <form id="user-form" novalidate>
+          <div class="form-sections">
+            <div class="panel form-section">
+              <h2>1. Identity</h2>
+              <p class="muted">Who this person is and where they belong on campus.</p>
+              <div class="form-grid">
+                <div>
+                  <label for="f-staff_id">User ID number</label>
+                  <input id="f-staff_id" name="staff_id" required placeholder="University-assigned ID" />
+                </div>
+                <div>
+                  <label for="f-name">Full name</label>
+                  <input id="f-name" name="name" required />
+                </div>
+                <div>
+                  <label for="f-category">Category</label>
+                  <select id="f-category" name="category" required></select>
+                </div>
+                <div>
+                  <label for="f-department">Department / campus address</label>
+                  <input id="f-department" name="department" required placeholder="e.g. Dept. of Physics, or Shop 12, Main Market" />
+                  <p class="hint">Staff: their department. Residents and shop owners: the address assigned by their department.</p>
+                </div>
+              </div>
+              <div class="photo-field">
+                <div class="photo-preview" id="passport-preview">Passport photo</div>
+                <div>
+                  <label for="f-passport_photo" style="margin-top: 0;">Passport photograph</label>
+                  <input type="file" id="f-passport_photo" accept="image/*" />
+                  <p class="hint">Clear, front-facing photo. Shown to the guard on the live monitor when this person's car arrives.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel form-section">
+              <h2>2. Contact</h2>
+              <p class="muted">OTPs and password reset codes are sent here.</p>
+              <div class="form-grid">
+                <div>
+                  <label for="f-email">Email address</label>
+                  <input type="email" id="f-email" name="email" required placeholder="name@example.com" />
+                </div>
+                <div>
+                  <label for="f-phone_number">Telephone number</label>
+                  <input type="tel" id="f-phone_number" name="phone_number" required placeholder="+234..." />
+                </div>
+              </div>
+            </div>
+
+            <div class="panel form-section">
+              <h2>3. Vehicle</h2>
+              <p class="muted">Details the guard can check against the car at the gate.</p>
+              <div class="form-grid">
+                <div>
+                  <label for="f-plate_number">Plate number</label>
+                  <input id="f-plate_number" name="plate_number" required placeholder="e.g. LND-113JN" style="text-transform: uppercase;" />
+                </div>
+                <div>
+                  <label for="f-vehicle_make">Brand</label>
+                  <input id="f-vehicle_make" name="vehicle_make" required placeholder="e.g. Toyota" />
+                </div>
+                <div>
+                  <label for="f-vehicle_model">Model <span class="hint">(optional)</span></label>
+                  <input id="f-vehicle_model" name="vehicle_model" placeholder="e.g. Corolla 2012" />
+                </div>
+                <div>
+                  <label for="f-vehicle_colour">Colour</label>
+                  <input id="f-vehicle_colour" name="vehicle_colour" required placeholder="e.g. Silver" />
+                </div>
+                <div class="span-2">
+                  <label for="f-vehicle_features">Distinguishing features</label>
+                  <textarea id="f-vehicle_features" name="vehicle_features" placeholder="Permanent marks that can't easily be changed: dents, scratches, body kit, roof rack, stickers, tinted windows..."></textarea>
+                </div>
+              </div>
+              <div class="photo-field wide">
+                <div class="photo-preview" id="vehicle-preview">Vehicle photo</div>
+                <div>
+                  <label for="f-vehicle_photo" style="margin-top: 0;">Vehicle snapshot</label>
+                  <input type="file" id="f-vehicle_photo" accept="image/*" />
+                  <p class="hint">Taken from the front, with the licence plate clearly readable.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel form-section" id="fingerprint-section">
+              <h2>4. Fingerprint <span class="hint">(can also be added later)</span></h2>
+              <p class="muted">Plug a spare fingerprint sensor into this computer with a USB serial adapter. Enroll at least two fingers.</p>
+              <div id="form-fingerprint" style="margin-top: 12px;"></div>
+            </div>
+          </div>
+
+          <p id="form-error" class="form-error" hidden style="max-width: 920px;"></p>
+          <div class="form-actions">
+            <a href="#users" class="button" id="form-cancel">Cancel</a>
+            <button type="submit" class="button button-primary" id="form-submit">Register user</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- ============ ACCESS LOG ============ -->
+      <section data-view="logs" hidden>
+        <div class="view-head">
+          <div>
+            <h1>Access log</h1>
+            <p class="muted">Every fingerprint and OTP verification at the gate.</p>
+          </div>
+        </div>
+        <div class="panel">
+          <form class="toolbar" id="log-filters">
+            <input type="search" name="q" placeholder="Search name, ID, plate..." />
+            <select name="method">
+              <option value="">Any method</option>
+              <option value="fingerprint">Fingerprint</option>
+              <option value="otp">OTP</option>
+              <option value="none">None (timeout)</option>
+            </select>
+            <select name="event_type">
+              <option value="">In &amp; out</option>
+              <option value="entry">Entry</option>
+              <option value="exit">Exit</option>
+            </select>
+            <select name="status">
+              <option value="">Any result</option>
+              <option value="success">Granted</option>
+              <option value="fail">Denied</option>
+            </select>
+            <input type="date" name="date_from" title="From" />
+            <input type="date" name="date_to" title="To" />
+          </form>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>Time</th><th>User</th><th>Plate</th><th>Direction</th><th>Method</th><th>Result</th><th>Details</th></tr>
+              </thead>
+              <tbody id="log-rows"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ DETECTIONS ============ -->
+      <section data-view="detections" hidden>
+        <div class="view-head">
+          <div>
+            <h1>Camera detections</h1>
+            <p class="muted">Every plate the gate camera has read, with the frame it was read from.</p>
+          </div>
+          <input type="search" id="detection-search" placeholder="Search plate..." style="width: 240px;" />
+        </div>
+        <div class="detection-grid" id="detection-grid"><p class="empty">Loading...</p></div>
+      </section>
+    </main>
   </div>
 
   <script src="js/api.js"></script>
+  <script src="js/gate-events.js"></script>
+  <script src="js/fingerprint-serial.js"></script>
   <script src="js/admin.js"></script>
 </body>
 </html>

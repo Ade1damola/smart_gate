@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Verigate Admin</title>
+  <link rel="stylesheet" href="css/admin.css" />
+</head>
+<body data-area="admin" class="admin-login-body">
+  <main class="admin-login">
+    <div class="admin-login-brand">
+      <span class="brand-mark">V</span>
+      <div>
+        <strong>Verigate</strong>
+        <span>Security administration</span>
+      </div>
+    </div>
+
+    <form id="admin-login-form" class="panel">
+      <h1>Admin sign in</h1>
+      <p class="muted">For gate security and registration staff only.</p>
+
+      <label for="admin_id">Admin ID</label>
+      <input type="text" id="admin_id" autocomplete="username" required />
+
+      <label for="password">Password</label>
+      <input type="password" id="password" autocomplete="current-password" required />
+
+      <p id="login-error" class="form-error" hidden></p>
+
+      <button type="submit" class="button button-primary button-block">Sign in</button>
+    </form>
+  </main>
+
+  <script src="js/api.js"></script>
+  <script>
+    (function () {
+      if (getToken()) {
+        window.location.href = "admin.html";
+        return;
+      }
+      const form = document.getElementById("admin-login-form");
+      const errorBox = document.getElementById("login-error");
+      const submitBtn = form.querySelector("button[type=submit]");
+
+      form.addEventListener("submit", async function (event) {
+        event.preventDefault();
+        errorBox.hidden = true;
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Signing in...";
+
+        const { ok, data } = await apiFetch("/api/admin/login", {
+          method: "POST",
+          body: JSON.stringify({
+            admin_id: document.getElementById("admin_id").value.trim(),
+            password: document.getElementById("password").value,
+          }),
+        });
+
+        if (ok && data.success) {
+          setToken(data.token);
+          window.location.href = "admin.html";
+          return;
+        }
+        errorBox.textContent = data.message || "Sign in failed.";
+        errorBox.hidden = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Sign in";
+      });
+    })();
+  </script>
+</body>
+</html>

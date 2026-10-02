@@ -14,6 +14,7 @@ db = SQLAlchemy()
 # permanent residents and shop/business owners are registered the same way.
 USER_CATEGORIES = {
     "staff": "Staff",
+    "student": "Student",
     "resident": "Permanent resident",
     "business": "Shop / business owner",
     "other": "Other",

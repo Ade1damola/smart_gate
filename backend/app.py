@@ -823,7 +823,10 @@ def admin_list_users():
                 continue
         users.append(data)
 
-    return jsonify({"success": True, "users": users, "categories": USER_CATEGORIES})
+    # A list rather than a dict: jsonify sorts dict keys, which would lose
+    # the display order (e.g. "Other" last).
+    categories = [{"key": key, "label": label} for key, label in USER_CATEGORIES.items()]
+    return jsonify({"success": True, "users": users, "categories": categories})
 
 
 @app.route("/api/admin/users", methods=["POST"])

@@ -3,7 +3,7 @@
 
   const FINGER_LABELS = ["Right thumb", "Right index", "Left thumb", "Left index", "Right middle", "Left middle"];
 
-  let categories = {};
+  let categories = [];
   let stopPolling = null;
 
   document.getElementById("logout-btn").addEventListener("click", logout);
@@ -212,8 +212,8 @@
   userCategory.addEventListener("change", loadUsers);
 
   function fillCategorySelects() {
-    const options = Object.keys(categories).map(function (key) {
-      return '<option value="' + key + '">' + escapeHtml(categories[key]) + "</option>";
+    const options = categories.map(function (category) {
+      return '<option value="' + category.key + '">' + escapeHtml(category.label) + "</option>";
     }).join("");
     const current = userCategory.value;
     userCategory.innerHTML = '<option value="">All categories</option>' + options;
@@ -229,7 +229,7 @@
       rows.innerHTML = '<tr><td colspan="5" class="empty">Could not load users</td></tr>';
       return;
     }
-    if (Object.keys(categories).length === 0) {
+    if (categories.length === 0) {
       categories = data.categories;
       fillCategorySelects();
     }
@@ -541,7 +541,7 @@
     setPreview("passport-preview", null, "Passport photo");
     setPreview("vehicle-preview", null, "Vehicle photo");
 
-    if (Object.keys(categories).length === 0) {
+    if (categories.length === 0) {
       const { data } = await apiFetch("/api/admin/users?q=__none__");
       if (data && data.categories) {
         categories = data.categories;

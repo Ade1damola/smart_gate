@@ -36,7 +36,7 @@
  * Wiring (ESP32-S3-N16R8):
  *   R307 Fingerprint: TX→GPIO18, RX→GPIO17, VCC→5V, GND→GND
  *   4x4 Keypad:       Rows→GPIO 4,5,6,7  Cols→GPIO 10,11,12,13
- *   OLED SSD1327 (1.12"): SDA→GPIO8, SCL→GPIO9, VCC→3.3V, GND→GND
+ *   Grove OLED 1.12" V2 (SH1107, 128x128): SDA→GPIO8, SCL→GPIO9, VCC→3.3V, GND→GND
  *   Buzzer:            +→GPIO47, -→GND
  *   Servo SG90:        Signal→GPIO15, VCC→5V, GND→GND
  * ============================================================
@@ -48,8 +48,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1327.h>
+#include <U8g2lib.h>
 #include <Adafruit_Fingerprint.h>
 #include <Keypad.h>
 #include <ESP32Servo.h>
@@ -98,9 +97,8 @@ const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
 // OLED display (I2C)
 #define OLED_SDA    8
 #define OLED_SCL    9
-#define OLED_WIDTH  96
-#define OLED_HEIGHT 96   // Grove OLED 1.12" (SSD1327) panels are 96x96
 #define OLED_ADDR   0x3C // Grove OLED 1.12" fixed I2C address
+#define OLED_POWER_UP_MS 500
 
 // Buzzer
 #define BUZZER_PIN  47
@@ -130,7 +128,9 @@ const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
 // HARDWARE OBJECTS
 // ============================================================
 
-Adafruit_SSD1327 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
+// Grove OLED 1.12" V2 is an SH1107 128x128 panel; U8g2 has a driver made
+// for Seeed's version (V1 was a 96x96 SSD1327 and needs a different one).
+U8G2_SH1107_SEEED_128X128_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE, OLED_SCL, OLED_SDA);
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial1);
 
 const byte ROWS = 4;
@@ -170,6 +170,14 @@ String pendingEventType = "EXIT";
 unsigned long verificationStartTime = 0;
 int otpAttempts = 0;
 
+// A scan only counts when a finger is *placed*: the sensor must have read
+// "no finger" since the last scan. R307 sensors can report a finger that
+// isn't there (bright light, a smudge on the glass); without this, that
+// phantom reading was scanned over and over as "not the owner".
+bool fingerArmed = false;
+unsigned long sensorLastClear = 0;
+bool stuckSensorWarned = false;
+
 // Owner's fingerprint templates, downloaded per vehicle.
 uint8_t templates[MAX_TEMPLATES][MAX_TEMPLATE_BYTES];
 size_t templateLengths[MAX_TEMPLATES];
@@ -191,37 +199,61 @@ bool usbEnrollMode = false;
 // DISPLAY FUNCTIONS
 // ============================================================
 
+// 128x128 screen: a bold title, a divider, then body text in a 6px-wide
+// font (21 characters per row), wrapped onto extra rows when needed.
+#define BODY_CHARS     21
+#define BODY_ROW_PX    14
+
+void drawTitle(const String& title) {
+    display.setFont(u8g2_font_7x14B_tf);
+    display.drawStr(0, 14, title.c_str());
+    display.drawHLine(0, 19, 128);
+}
+
+// Draws text from the given baseline, wrapping at spaces. Returns the
+// baseline after the last row drawn.
+int drawWrapped(const String& text, int baseline) {
+    display.setFont(u8g2_font_6x12_tf);
+    String rest = text;
+    rest.trim();
+    while (rest.length() > 0) {
+        String row = rest;
+        if (rest.length() > BODY_CHARS) {
+            int cut = rest.lastIndexOf(' ', BODY_CHARS);
+            if (cut <= 0) cut = BODY_CHARS;
+            row = rest.substring(0, cut);
+            rest = rest.substring(cut);
+            rest.trim();
+        } else {
+            rest = "";
+        }
+        display.drawStr(0, baseline, row.c_str());
+        baseline += BODY_ROW_PX;
+    }
+    return baseline;
+}
+
 void displayMessage(String line1, String line2, String line3) {
-    display.clearDisplay();
-    display.setTextColor(SSD1327_WHITE);
-    display.setTextSize(1);
-    display.setCursor(0, 0);
-    display.println(line1);
-    display.setCursor(0, 12);
-    display.println(line2);
-    display.setCursor(0, 24);
-    display.println(line3);
-    display.display();
+    display.clearBuffer();
+    drawTitle(line1);
+    int baseline = drawWrapped(line2, 38);
+    drawWrapped(line3, baseline + 8);
+    display.sendBuffer();
 }
 
 void displayLargeOTP(String otp) {
-    display.clearDisplay();
-    display.setTextColor(SSD1327_WHITE);
+    display.clearBuffer();
+    drawTitle("ENTER OTP");
 
-    display.setTextSize(1);
-    display.setCursor(0, 0);
-    display.println("ENTER OTP:");
-
-    display.setTextSize(2);
-    display.setCursor(4, 8);
+    String digits = "";
     for (int i = 0; i < OTP_LENGTH; i++) {
-        display.print(i < (int)otp.length() ? otp[i] : '_');
+        digits += i < (int)otp.length() ? otp[i] : '_';
     }
+    display.setFont(u8g2_font_10x20_tf);
+    display.drawStr((128 - OTP_LENGTH * 10) / 2, 66, digits.c_str());
 
-    display.setTextSize(1);
-    display.setCursor(0, 24);
-    display.println("#=Confirm  *=Clear");
-    display.display();
+    drawWrapped("#=Confirm  *=Clear", 104);
+    display.sendBuffer();
 }
 
 void showIdleScreen() {
@@ -405,9 +437,39 @@ bool fpMatchBuffers(int& score) {
  * 1 if it's the owner (matchedRef/score describe which template matched).
  */
 int checkDriverFinger(String& matchedRef, int& score) {
+    uint8_t p = finger.getImage();
+    if (p == FINGERPRINT_NOFINGER) {
+        if (stuckSensorWarned) {
+            if (phase == PHASE_OTP) showOtpPrompt();
+            else showFingerPrompt();
+        }
+        fingerArmed = true;
+        sensorLastClear = millis();
+        stuckSensorWarned = false;
+        return -1;
+    }
+    if (p != FINGERPRINT_OK) return -1;
+
+    if (!fingerArmed) {
+        // "Finger" present but never lifted: either the last finger is
+        // still there, or the sensor is seeing something that isn't a
+        // finger. Tell the guard if it goes on for a while.
+        if (!stuckSensorWarned && millis() - sensorLastClear > 8000) {
+            Serial.println("[FP] Sensor keeps reporting a finger - lift finger / clean the glass.");
+            displayMessage("LIFT FINGER", "Sensor reads a finger", "Lift it / clean glass");
+            stuckSensorWarned = true;
+        }
+        return -1;
+    }
+
+    // Make sure it's still there a moment later, so a flicker isn't scanned.
+    delay(80);
     if (finger.getImage() != FINGERPRINT_OK) return -1;
+    fingerArmed = false;   // one result per placement
+    Serial.println("[FP] Finger placed - checking.");
+
     if (finger.image2Tz(1) != FINGERPRINT_OK) {
-        displayMessage("SCAN FINGER", "Unclear print", "Press flat, again");
+        displayMessage("SCAN FINGER", "Unclear print", "Lift, press flat again");
         delay(800);
         return -1;
     }
@@ -435,12 +497,6 @@ int checkDriverFinger(String& matchedRef, int& score) {
     return 0;
 }
 
-void waitForFingerRemoved() {
-    unsigned long start = millis();
-    while (finger.getImage() != FINGERPRINT_NOFINGER && millis() - start < 3000) {
-        delay(100);
-    }
-}
 
 
 // ============================================================
@@ -612,6 +668,9 @@ void handleStaffAlert() {
     awaitingVerification = true;
     phase = PHASE_LOAD_TEMPLATES;
     otpAttempts = 0;
+    fingerArmed = false;
+    sensorLastClear = millis();
+    stuckSensorWarned = false;
     verificationStartTime = millis();
 
     Serial.println("\n========================================");
@@ -711,6 +770,8 @@ String readOTP(char firstDigit) {
     return "";
 }
 
+void handleOtpEntry(char firstDigit);
+
 void processVerification() {
     if (millis() - verificationStartTime > VERIFICATION_TIMEOUT_MS) {
         Serial.println("[VERIFY] Timeout.");
@@ -737,7 +798,19 @@ void processVerification() {
         return;
     }
 
-    // --- 2. Fingerprint always comes first ---
+    // --- 3. OTP step: the keypad is checked first, so key presses are never
+    //        lost while the sensor is being read. (The keypad is only live
+    //        once a fingerprint has been tried - see step 2.)
+    if (phase == PHASE_OTP) {
+        char key = keypad.getKey();
+        if (key >= '0' && key <= '9') {
+            handleOtpEntry(key);
+            return;
+        }
+    }
+
+    // --- 2. Fingerprint always comes first (the owner can also still
+    //        scan during the OTP step) ---
     String matchedRef;
     int score = 0;
     int fingerResult = checkDriverFinger(matchedRef, score);
@@ -757,18 +830,11 @@ void processVerification() {
             phase = PHASE_OTP;
         }
         showOtpPrompt();
-        waitForFingerRemoved();
-        return;
     }
+}
 
-    // The keypad only becomes active once a fingerprint has been tried.
-    if (phase != PHASE_OTP) return;
-
-    // --- 3. OTP for a driver who isn't the owner ---
-    char key = keypad.getKey();
-    if (!(key >= '0' && key <= '9')) return;
-
-    String otp = readOTP(key);
+void handleOtpEntry(char firstDigit) {
+    String otp = readOTP(firstDigit);
     if (otp.length() != OTP_LENGTH) {
         displayMessage("OTP INCOMPLETE", "Try again", "");
         delay(1500);
@@ -854,11 +920,30 @@ void setupUsbBridge() {
 // SETUP
 // ============================================================
 
+bool initDisplay() {
+    /*
+     * The Grove OLED has no reset pin wired, and it ignores commands for a
+     * moment after power-on - starting it immediately leaves the panel
+     * white or garbled until the next reset. Give it time, and retry once.
+     */
+    delay(OLED_POWER_UP_MS);
+    for (int attempt = 0; attempt < 2; attempt++) {
+        display.begin();   // also starts I2C on OLED_SDA/OLED_SCL
+        Wire.beginTransmission(OLED_ADDR);
+        if (Wire.endTransmission() == 0) {
+            display.clearBuffer();
+            display.sendBuffer();
+            return true;
+        }
+        delay(OLED_POWER_UP_MS);
+    }
+    return false;
+}
+
 void setup() {
     pinMode(BUZZER_PIN, OUTPUT);
     digitalWrite(BUZZER_PIN, LOW);
-    Wire.begin(OLED_SDA, OLED_SCL);
-    display.begin(OLED_ADDR);
+    bool displayOk = initDisplay();
 
     settings.begin("gate", false);
     usbEnrollMode = settings.getBool("usb_enroll", false);
@@ -874,6 +959,7 @@ void setup() {
     Serial.println("========================================\n");
 
     Serial.println("[INIT] Buzzer: OK");
+    Serial.println(displayOk ? "[INIT] OLED: OK" : "[INIT] OLED: NOT FOUND - check wiring (SDA→GPIO8, SCL→GPIO9)");
     displayMessage("SMART GATE", "Starting up...", "");
 
     gateServo.attach(SERVO_PIN);

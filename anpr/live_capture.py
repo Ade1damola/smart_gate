@@ -178,11 +178,11 @@ class FramePusher(threading.Thread):
             frame_number, frame = self._grabber.latest()
             if frame is not None and frame_number != last_pushed:
                 try:
-                    if gate_client.push_camera_frame(_encode_jpeg(frame, PUSH_WIDTH, PUSH_JPEG_QUALITY)):
-                        last_pushed = frame_number
-                        if reported_failure:
-                            print("Live feed to server restored.")
-                        reported_failure = False
+                    gate_client.push_camera_frame(_encode_jpeg(frame, PUSH_WIDTH, PUSH_JPEG_QUALITY))
+                    last_pushed = frame_number
+                    if reported_failure:
+                        print("Live feed to server restored.")
+                    reported_failure = False
                 except Exception as exc:
                     if not reported_failure:
                         print(f"Could not send live frame to server: {exc}")
@@ -296,6 +296,11 @@ def _handle_plate(plate, frame):
         data = gate_client.report_detection(
             plate, _encode_jpeg(frame, SNAPSHOT_WIDTH, SNAPSHOT_JPEG_QUALITY), event_type=EVENT_TYPE,
         )
+    except gate_client.ServerError as exc:
+        # Don't guess: without a real answer the car could be registered,
+        # so the gate stays shut and the guard handles it.
+        print(f"Server refused the lookup for {plate} ({exc}) - gate NOT opened. Check DEVICE_API_KEY.")
+        return False
     except Exception as exc:
         # Real network blips will happen in a long-running deployment; log
         # and keep scanning rather than die.

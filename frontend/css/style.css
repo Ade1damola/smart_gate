@@ -299,3 +299,39 @@ select {
   flex: 1 1 200px;
   margin-top: 0;
 }
+
+.login-wrap {
+  width: 100%;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.login-brand strong {
+  display: block;
+  font-size: 1.2rem;
+}
+
+.login-brand span:not(.brand-mark) {
+  display: block;
+  color: #5b6b7a;
+  font-size: 0.85rem;
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 800;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}

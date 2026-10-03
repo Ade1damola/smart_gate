@@ -330,7 +330,7 @@
               <li>Find your laptop's Wi-Fi address with <code>ipconfig</code> (the <em>IPv4 Address</em>, e.g. <code>192.168.1.50</code>). The ESP32 needs it.</li>
               <li>Emails and SMS aren't really sent locally &mdash; OTP emails and password-reset codes are <strong>printed in this server window</strong> instead.</li>
             </ul>
-            <p class="doc-note"><strong>Device key:</strong> the line <code>$env:DEVICE_API_KEY = ""</code> turns off the device key check for local testing. If you'd rather keep a key, set the same value here, in the camera computer's window, and in the ESP32's <code>secrets.h</code>. If they don't match you'll get <em>"Invalid or missing device key"</em>.</p>
+            <p class="doc-note"><strong>Device key:</strong> <code>$env:DEVICE_API_KEY = ""</code> turns off the device key check for local testing. Run that line in <strong>every</strong> window (server and camera) &mdash; your Windows settings have a key saved, so any window where you skip it still sends that key, and the two sides won't match. The ESP32's <code>secrets.h</code> must then have <code>DEVICE_API_KEY ""</code> too. A mismatch shows as <em>"Invalid or missing device key"</em> and the gate stays shut.</p>
             <p class="doc-note"><strong>Windows Firewall:</strong> the first time, Windows may ask whether Python can accept connections &mdash; allow it on <em>private networks</em>, or the ESP32 won't reach the server.</p>
           </article>
 
@@ -384,9 +384,9 @@ const char* SERVER_URL = "http://192.168.1.50:5000";   // your laptop's IPv4 add
             <h2>6. Run the camera (ANPR)</h2>
             <p>On the camera computer (can be this laptop), in a <strong>new</strong> PowerShell window from the project folder:</p>
 <pre><code>cd anpr
+$env:DEVICE_API_KEY = ""
 $env:SERVER_URL = "http://localhost:5000"     # or http://LAPTOP-IP:5000 from another computer
 $env:ESP32_URL  = "http://192.168.1.80"       # the ESP32's IP (shown on its screen / Serial Monitor)
-$env:DEVICE_API_KEY = ""
 ..\.venv\Scripts\python.exe live_capture.py</code></pre>
             <p>You should see <em>ANPR live capture started</em>. Within a few seconds the <em>ANPR camera</em> turns Online here and the picture appears on the Overview and the <a href="monitor.html" target="_blank" rel="noopener">Live monitor</a>.</p>
 
@@ -476,7 +476,7 @@ $env:DEVICE_API_KEY = ""
             <h2>11. Troubleshooting</h2>
             <table class="data-table doc-table">
               <tbody>
-                <tr><td>"Invalid or missing device key"</td><td><code>DEVICE_API_KEY</code> differs between the server, camera computer and ESP32. Make them identical (or all empty locally).</td></tr>
+                <tr><td>"Invalid or missing device key"</td><td><code>DEVICE_API_KEY</code> differs between the server, camera computer and ESP32. Locally, run <code>$env:DEVICE_API_KEY = ""</code> in every window and leave it empty in <code>secrets.h</code>. The camera script prints <em>"Server refused the lookup"</em> in this case.</td></tr>
                 <tr><td>Gate controller stays Offline</td><td>Wrong <code>SERVER_URL</code> in the firmware, laptop firewall blocking port 5000, or ESP32 on a different Wi-Fi.</td></tr>
                 <tr><td>Camera Online but no plates detected</td><td>Plate too small or blurry &mdash; move closer; try <code>PREFILTER=none</code> and <code>CONFIRM_READS=1</code>.</td></tr>
                 <tr><td>Plate detected but gate does nothing</td><td>Camera computer can't reach the ESP32 &mdash; set <code>ESP32_URL</code> to the ESP32's IP instead of <code>verigate.local</code>.</td></tr>

@@ -27,6 +27,23 @@ def _device_headers():
     return headers
 
 
+class ServerError(Exception):
+    """The server answered, but refused the request (wrong device key, bad
+    data...). Never treat this as a "not registered" answer - that would
+    open the gate for a registered car."""
+
+
+def _lookup_result(response):
+    try:
+        data = response.json()
+    except ValueError:
+        data = {}
+    if response.status_code != 200 or "is_staff_vehicle" not in data:
+        message = data.get("message") or response.reason
+        raise ServerError(f"{response.status_code} {message}")
+    return data
+
+
 def request_check_plate(plate):
     """GET /check_plate on the hosted server. Returns the parsed JSON dict."""
     response = requests.get(
@@ -35,7 +52,7 @@ def request_check_plate(plate):
         headers=_device_headers(),
         timeout=10,
     )
-    return response.json()
+    return _lookup_result(response)
 
 
 def report_detection(plate, jpeg_bytes=None, event_type="entry"):
@@ -52,11 +69,12 @@ def report_detection(plate, jpeg_bytes=None, event_type="entry"):
         headers=_device_headers(),
         timeout=30,
     )
-    return response.json()
+    return _lookup_result(response)
 
 
 def push_camera_frame(jpeg_bytes):
-    """POST one live frame for the admin monitor. Returns True on success."""
+    """POST one live frame for the admin monitor. Raises ServerError if the
+    server refuses it."""
     headers = _device_headers()
     headers["Content-Type"] = "image/jpeg"
     response = requests.post(
@@ -65,7 +83,12 @@ def push_camera_frame(jpeg_bytes):
         headers=headers,
         timeout=10,
     )
-    return response.status_code == 200
+    if response.status_code != 200:
+        try:
+            message = response.json().get("message")
+        except ValueError:
+            message = response.reason
+        raise ServerError(f"{response.status_code} {message}")
 
 
 def verify_fingerprint(staff_id, template_id, plate_number, event_type="entry"):

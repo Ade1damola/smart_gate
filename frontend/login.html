@@ -8,22 +8,32 @@
 </head>
 <body data-area="staff">
   <div class="page page-center">
-    <div class="card" style="width: 100%;">
-      <h1>Log In</h1>
-      <p class="subtitle">Manage gate access OTPs for your registered vehicle.</p>
+    <div class="login-wrap">
+      <div class="login-brand">
+        <span class="brand-mark">V</span>
+        <div>
+          <strong>Verigate</strong>
+          <span>Smart gate access</span>
+        </div>
+      </div>
 
-      <form id="login-form">
-        <label for="login_id">User ID number</label>
-        <input type="text" id="login_id" name="login_id" autocomplete="username" required />
+      <div class="card">
+        <h1>Log In</h1>
+        <p class="subtitle">Manage gate access OTPs for your registered vehicle.</p>
 
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" autocomplete="current-password" required />
+        <form id="login-form">
+          <label for="login_id">User ID number</label>
+          <input type="text" id="login_id" name="login_id" autocomplete="username" required />
 
-        <p id="login-error" class="error-message" hidden></p>
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" required />
 
-        <button type="submit" class="btn btn-primary btn-large">Log In</button>
-      </form>
-      <p style="margin-top: 8px;"><a href="forgot-password.html" class="btn btn-link">Forgot password?</a></p>
+          <p id="login-error" class="error-message" hidden></p>
+
+          <button type="submit" class="btn btn-primary btn-large">Log In</button>
+        </form>
+        <p style="margin-top: 8px;"><a href="forgot-password.html" class="btn btn-link">Forgot password?</a></p>
+      </div>
     </div>
   </div>
 

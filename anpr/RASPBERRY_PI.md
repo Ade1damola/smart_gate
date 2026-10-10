@@ -30,7 +30,7 @@ the system camera libraries:
 ```sh
 sudo mkdir -p /opt/smart_gate
 sudo chown "$USER":"$USER" /opt/smart_gate
-git clone https://github.com/Ade1damola/smart_gate.git /opt/smart_gate
+git clone --branch admin-dashboard-server-fingerprints https://github.com/Ade1damola/smart_gate.git /opt/smart_gate
 cd /opt/smart_gate
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install --upgrade pip

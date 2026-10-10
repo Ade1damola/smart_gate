@@ -1,0 +1,19 @@
+[Unit]
+Description=Smart Gate continuous ANPR camera
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=pi
+Group=video
+WorkingDirectory=/opt/smart_gate/anpr
+EnvironmentFile=/etc/smart-gate/anpr.env
+ExecStart=/opt/smart_gate/.venv/bin/python /opt/smart_gate/anpr/live_capture.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

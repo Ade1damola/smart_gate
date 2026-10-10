@@ -115,8 +115,8 @@ class _Picamera2Camera:
         time.sleep(1)  # let auto-exposure/white-balance settle
 
     def read(self):
-        # picamera2 hands back RGB888; everything downstream expects BGR.
-        return cv2.cvtColor(self._picam2.capture_array(), cv2.COLOR_RGB2BGR)
+        # Picamera2's RGB888 buffer is laid out as BGR for OpenCV consumers.
+        return self._picam2.capture_array()
 
     def close(self):
         self._picam2.stop()
@@ -221,8 +221,7 @@ class MotionDetector:
 
 
 def _cascade_sees_plate(frame):
-    """Haar-cascade check for anything plate-shaped (the same settings
-    anpr_engine.py uses). Trained on Russian plates, so it can miss some
+    """Haar-cascade check for anything plate-shaped. Trained on Russian plates, so it can miss some
     Nigerian ones - which is why motion is the default pre-filter."""
     img_w = frame.shape[1]
     scale = DETECTION_WIDTH / img_w if img_w > DETECTION_WIDTH else 1.0

@@ -13,7 +13,9 @@ import os
 import random
 import re
 import secrets
+import sys
 import string
+import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
@@ -21,6 +23,7 @@ from datetime import datetime, timedelta
 import requests
 from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 
 from models import (
     db, Staff, Admin, Vehicle, FingerprintTemplate, Otp, PasswordResetOtp, Log, GateEvent,
@@ -30,6 +33,8 @@ from models import (
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 FRONTEND_DIR = os.path.join(BASE_DIR, "..", "frontend")
+ANPR_DIR = os.path.join(BASE_DIR, "..", "anpr")
+ALLOWED_ANPR_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -1547,6 +1552,52 @@ def log_event_route():
         message=details or f"{method} {status}",
     )
     return jsonify({"success": True, "message": "Event logged"})
+
+
+# # Local-only ANPR upload route. Keep this change out of hosted deployments.
+# @app.route("/api/anpr/rapidocr", methods=["POST"])
+# def rapidocr_upload():
+#     uploaded_file = request.files.get("image")
+#     if uploaded_file is None or not uploaded_file.filename:
+#         return jsonify({"success": False, "message": "Please choose an image file."}), 400
+
+#     extension = os.path.splitext(secure_filename(uploaded_file.filename))[1].lower()
+#     if extension not in ALLOWED_ANPR_EXTENSIONS:
+#         return jsonify({"success": False, "message": "Upload a JPG, PNG, BMP, or WEBP image."}), 400
+
+#     temporary_path = None
+#     try:
+#         with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temporary_file:
+#             uploaded_file.save(temporary_file)
+#             temporary_path = temporary_file.name
+
+#         if ANPR_DIR not in sys.path:
+#             sys.path.insert(0, ANPR_DIR)
+#         from anpr_engine_rapidocr import run_anpr
+#         import gate_client
+
+#         plate = run_anpr(temporary_path)
+#         if not plate:
+#             return jsonify({"success": True, "plate": None, "message": "No plate detected."})
+
+#         check_data = gate_client.request_check_plate(plate)
+#         if not check_data.get("is_staff_vehicle"):
+#             opened = gate_client.open_gate_for_non_staff()
+#             message = "Non-staff vehicle: gate opened." if opened else "ESP32 could not be reached."
+#         else:
+#             response = gate_client.notify_esp32(check_data, event_type="entry")
+#             message = "Staff vehicle detected. ESP32 notified." if response is not None else "Staff vehicle detected, but the ESP32 could not be reached."
+
+#         return jsonify({"success": True, "plate": plate, "message": message})
+#     except Exception as exc:
+#         app.logger.exception("Local RapidOCR upload failed")
+#         return jsonify({"success": False, "message": f"RapidOCR failed: {type(exc).__name__}"}), 500
+#     finally:
+#         if temporary_path:
+#             try:
+#                 os.remove(temporary_path)
+#             except OSError:
+#                 pass
 
 
 # ---------------------------------------------------------------------------

@@ -157,6 +157,19 @@
                 <div>
                   <label for="f-passport_photo" style="margin-top: 0;">Passport photograph</label>
                   <input type="file" id="f-passport_photo" accept="image/*" />
+                  <button type="button" class="button button-small" id="passport-camera-open">Connect external webcam</button>
+                  <div class="passport-camera" id="passport-camera" hidden>
+                    <label for="passport-camera-device">Camera</label>
+                    <select id="passport-camera-device" aria-label="Select external webcam">
+                      <option value="">Choose a connected camera</option>
+                    </select>
+                    <video id="passport-camera-video" autoplay playsinline muted></video>
+                    <div class="passport-camera-actions">
+                      <button type="button" class="button button-small button-primary" id="passport-camera-capture">Take photo</button>
+                      <button type="button" class="button button-small" id="passport-camera-cancel">Cancel</button>
+                    </div>
+                    <p class="hint" id="passport-camera-status" role="status"></p>
+                  </div>
                   <p class="hint">Clear, front-facing photo. Shown to the guard on the live monitor when this person's car arrives.</p>
                 </div>
               </div>

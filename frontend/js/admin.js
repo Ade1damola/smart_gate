@@ -35,6 +35,7 @@
   }
 
   function route() {
+    stopPassportCamera();
     if (stopPolling) {
       stopPolling();
       stopPolling = null;
@@ -485,11 +486,124 @@
   const registerResult = document.getElementById("register-result");
   const passportInput = document.getElementById("f-passport_photo");
   const vehicleInput = document.getElementById("f-vehicle_photo");
+  const passportCamera = document.getElementById("passport-camera");
+  const passportCameraVideo = document.getElementById("passport-camera-video");
+  const passportCameraStatus = document.getElementById("passport-camera-status");
+  const passportCameraDevice = document.getElementById("passport-camera-device");
   const FIELD_NAMES = ["staff_id", "name", "category", "department", "email", "phone_number",
     "plate_number", "vehicle_make", "vehicle_model", "vehicle_colour", "vehicle_features"];
 
   let editingId = null;
   let pendingFingerprints = [];
+  let passportCameraStream = null;
+
+  function stopPassportCamera() {
+    if (passportCameraStream) {
+      passportCameraStream.getTracks().forEach(function (track) { track.stop(); });
+      passportCameraStream = null;
+    }
+    passportCameraVideo.srcObject = null;
+    passportCamera.hidden = true;
+  }
+
+  async function startPassportCamera(deviceId) {
+    if (!deviceId) return;
+    if (passportCameraStream) {
+      passportCameraStream.getTracks().forEach(function (track) { track.stop(); });
+      passportCameraStream = null;
+    }
+    passportCameraVideo.srcObject = null;
+    passportCameraStatus.textContent = "Connecting to selected camera...";
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: deviceId } },
+        audio: false,
+      });
+      if (passportCamera.hidden) {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+        return;
+      }
+      passportCameraStream = stream;
+      passportCameraVideo.srcObject = stream;
+      const cameras = (await navigator.mediaDevices.enumerateDevices())
+        .filter(function (device) { return device.kind === "videoinput"; });
+      cameras.forEach(function (device) {
+        const option = Array.from(passportCameraDevice.options).find(function (item) {
+          return item.value === device.deviceId;
+        });
+        if (option && device.label) option.textContent = device.label;
+      });
+      passportCameraDevice.value = deviceId;
+      passportCameraStatus.textContent = "Position the person in the frame, then take the photo.";
+    } catch (err) {
+      passportCameraStatus.textContent = err.message || "Could not open the selected camera.";
+    }
+  }
+
+  document.getElementById("passport-camera-open").addEventListener("click", async function () {
+    stopPassportCamera();
+    passportCamera.hidden = false;
+    passportCameraStatus.textContent = "Starting webcam...";
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Webcam access is not supported by this browser.");
+      }
+      const cameras = (await navigator.mediaDevices.enumerateDevices())
+        .filter(function (device) { return device.kind === "videoinput"; });
+      passportCameraDevice.innerHTML = '<option value="">Choose a connected camera</option>';
+      cameras.forEach(function (device, index) {
+        const option = document.createElement("option");
+        option.value = device.deviceId;
+        option.textContent = device.label || "Camera " + (index + 1);
+        passportCameraDevice.appendChild(option);
+      });
+
+      const logitech = cameras.find(function (device) { return /c270/i.test(device.label); });
+      if (logitech) {
+        passportCameraDevice.value = logitech.deviceId;
+        startPassportCamera(logitech.deviceId);
+      } else {
+        passportCameraStatus.textContent = cameras.length
+          ? "Select the external webcam from the list. Camera names may appear after you grant access."
+          : "No connected webcam was found.";
+      }
+    } catch (err) {
+      stopPassportCamera();
+      passportCamera.hidden = false;
+      passportCameraStatus.textContent = err.name === "NotAllowedError"
+        ? "Allow camera access in your browser to take a photo."
+        : err.message || "Could not open the webcam.";
+    }
+  });
+
+  passportCameraDevice.addEventListener("change", function () {
+    startPassportCamera(passportCameraDevice.value);
+  });
+
+  document.getElementById("passport-camera-capture").addEventListener("click", function () {
+    if (!passportCameraVideo.videoWidth || !passportCameraVideo.videoHeight) {
+      passportCameraStatus.textContent = "The webcam is not ready yet. Try again in a moment.";
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = passportCameraVideo.videoWidth;
+    canvas.height = passportCameraVideo.videoHeight;
+    canvas.getContext("2d").drawImage(passportCameraVideo, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(function (blob) {
+      if (!blob) {
+        passportCameraStatus.textContent = "Could not capture the photo. Please try again.";
+        return;
+      }
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([blob], "passport.jpg", { type: "image/jpeg" }));
+      passportInput.files = transfer.files;
+      passportInput.dispatchEvent(new Event("change", { bubbles: true }));
+      stopPassportCamera();
+    }, "image/jpeg", 0.92);
+  });
+
+  document.getElementById("passport-camera-cancel").addEventListener("click", stopPassportCamera);
+  window.addEventListener("pagehide", stopPassportCamera);
 
   function setPreview(previewId, src, fallback) {
     const preview = document.getElementById(previewId);
@@ -532,6 +646,7 @@
   }
 
   async function openForm(staffId) {
+    stopPassportCamera();
     editingId = staffId;
     pendingFingerprints = [];
     form.reset();
@@ -645,6 +760,7 @@
       return;
     }
 
+    stopPassportCamera();
     formSubmit.disabled = true;
     formSubmit.textContent = "Saving...";
 

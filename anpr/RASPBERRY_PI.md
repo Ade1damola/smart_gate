@@ -30,7 +30,7 @@ the system camera libraries:
 ```sh
 sudo mkdir -p /opt/smart_gate
 sudo chown "$USER":"$USER" /opt/smart_gate
-git clone --branch admin-dashboard-server-fingerprints https://github.com/Ade1damola/smart_gate.git /opt/smart_gate
+git clone --branch main https://github.com/Ade1damola/smart_gate.git /opt/smart_gate
 cd /opt/smart_gate
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install --upgrade pip
@@ -54,8 +54,8 @@ Set the values for this installation (replace the example addresses and key):
 
 ```ini
 CAMERA_BACKEND=picamera2
-SERVER_URL=https://verigate-ry5y.onrender.com
-ESP32_URL=http://verigate.local
+SERVER_URL=replace-with-the-serverl-url
+ESP32_URL=replace-with-the esp-url
 DEVICE_API_KEY=replace-with-the-server-device-key
 ANPR_EVENT_TYPE=entry
 ```

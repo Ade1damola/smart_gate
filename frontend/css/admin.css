@@ -428,6 +428,10 @@ textarea { resize: vertical; min-height: 72px; }
 .photo-field.wide .photo-preview { aspect-ratio: 4 / 3; }
 .photo-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .photo-preview.has-image { border-style: solid; padding: 0; }
+.passport-camera { margin-top: 10px; max-width: 360px; }
+.passport-camera video { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #111; border-radius: 6px; }
+.passport-camera-actions { display: flex; gap: 8px; margin-top: 8px; }
+.passport-camera .hint { margin: 6px 0 0; }
 
 .form-actions {
   display: flex;

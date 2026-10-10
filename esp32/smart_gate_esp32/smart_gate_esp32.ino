@@ -66,10 +66,11 @@
 #include "secrets.h"
 
 // Hosted server URL (your Render web service)
-const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
+// const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
 
-// If using local Flask server on laptop for testing, use this instead:
-// const char* SERVER_URL = "http://192.168.1.50:5000";
+// Local Flask server on the laptop, for testing. Use the laptop's Wi-Fi
+// IPv4 address (ipconfig) - switch back to the Render URL before deploying.
+const char* SERVER_URL = "http://10.210.252.254:5000";
 
 // DEVICE_API_KEY (from secrets.h) is sent as the X-Device-Key header on
 // every hosted-server call. Must exactly match the DEVICE_API_KEY

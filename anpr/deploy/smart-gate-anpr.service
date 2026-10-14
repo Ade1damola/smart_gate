@@ -6,10 +6,10 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=pi
+User=gateadmin
 Group=video
 WorkingDirectory=/opt/smart_gate/anpr
-EnvironmentFile=/etc/smart-gate/anpr.env
+EnvironmentFile=/opt/smart_gate/.env
 ExecStart=/opt/smart_gate/.venv/bin/python /opt/smart_gate/anpr/live_capture.py
 Restart=always
 RestartSec=5

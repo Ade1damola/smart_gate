@@ -1,9 +1,8 @@
 """Flask backend for the Smart Gate staff app.
 
-Storage is SQLAlchemy-backed: SQLite locally by default, Postgres in
-production (set DATABASE_URL). This lets the same codebase run on a laptop
-for development and on a hosted platform (Render) for the real ESP32/Pi
-gate hardware.
+Storage is SQLAlchemy-backed: set DATABASE_URL to use local PostgreSQL or
+Render's PostgreSQL in production. SQLite remains the fallback when no URL is
+configured, so the same codebase can still start in a minimal dev environment.
 """
 
 import base64
@@ -19,8 +18,10 @@ import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
@@ -31,6 +32,8 @@ from models import (
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = Path(BASE_DIR).parent
+load_dotenv(REPO_ROOT / ".env")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 FRONTEND_DIR = os.path.join(BASE_DIR, "..", "frontend")
 ANPR_DIR = os.path.join(BASE_DIR, "..", "anpr")
@@ -39,7 +42,7 @@ ALLOWED_ANPR_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 os.makedirs(DATA_DIR, exist_ok=True)
 
 DEFAULT_DATABASE_URL = "sqlite:///" + os.path.join(DATA_DIR, "smart_gate.db")
-DATABASE_URL = os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL)
+DATABASE_URL = os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL
 # Render (and most Postgres hosts) hand out "postgres://" / "postgresql://"
 # URLs; pin the psycopg (v3) driver explicitly so the choice doesn't depend on
 # SQLAlchemy's default dialect driver, which changed between versions.
@@ -58,20 +61,26 @@ DEVICE_API_KEY = os.environ.get("DEVICE_API_KEY", "")
 TERMII_API_KEY = os.environ.get("TERMII_API_KEY", "")
 TERMII_SENDER_ID = os.environ.get("TERMII_SENDER_ID", "")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "")
 
 # Default password assigned to every newly-added staff member. They're
 # expected to use the "forgot password" OTP flow to set their own password.
 # Real value set via the DEFAULT_STAFF_PASSWORD env var on the server; this
 # fallback is only for local dev and is not a real credential.
-DEFAULT_STAFF_PASSWORD = os.environ.get("DEFAULT_STAFF_PASSWORD", "local-dev-only")
+DEFAULT_STAFF_PASSWORD = os.environ.get("DEFAULT_STAFF_PASSWORD", "")
 
 # Default password for the seeded admin account. Admins have no phone number
 # and no forgot-password flow of their own, so this only changes if someone
 # updates it directly in the database. Real value set via the
 # DEFAULT_ADMIN_PASSWORD env var on the server; this fallback is only for
 # local dev and is not a real credential.
-DEFAULT_ADMIN_PASSWORD = os.environ.get("DEFAULT_ADMIN_PASSWORD", "local-dev-only")
+DEFAULT_ADMIN_PASSWORD = os.environ.get("DEFAULT_ADMIN_PASSWORD", "")
+
+if not DEFAULT_STAFF_PASSWORD or not DEFAULT_ADMIN_PASSWORD:
+    raise RuntimeError(
+        "Set DEFAULT_STAFF_PASSWORD and DEFAULT_ADMIN_PASSWORD in the project .env "
+        "or deployment environment before starting the backend."
+    )
 
 # How long a password-reset OTP stays valid.
 RESET_OTP_VALID_MINUTES = 10

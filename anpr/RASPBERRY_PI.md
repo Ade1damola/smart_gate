@@ -42,33 +42,37 @@ credential method. Do not put a GitHub token in the clone URL or this guide.
 
 ## Configure device access
 
-Create the service environment file outside the repository:
+Create the shared local configuration file from the safe template and restrict
+it to the `gateadmin` account (or the account that owns the checkout):
 
 ```sh
-sudo install -d -m 0750 /etc/smart-gate
-sudo install -m 0600 /dev/null /etc/smart-gate/anpr.env
-sudo nano /etc/smart-gate/anpr.env
+cp .env.example .env
+chmod 600 .env
+nano .env
 ```
 
-Set the values for this installation (replace the example addresses and key):
+Set real values only in `.env`. Configure `SERVER_URL`, `ESP32_URL`,
+`DEVICE_API_KEY`, and unique `DEFAULT_STAFF_PASSWORD` and
+`DEFAULT_ADMIN_PASSWORD` values. The template's hostnames and credentials are
+placeholders and must be replaced. The backend and ANPR client load this file;
+the systemd service also reads it directly. Keep `.env` private and never
+commit it.
 
-```ini
-CAMERA_BACKEND=picamera2
-SERVER_URL=replace-with-the-serverl-url
-ESP32_URL=replace-with-the esp-url
-DEVICE_API_KEY=replace-with-the-server-device-key
-ANPR_EVENT_TYPE=entry
-```
+`SERVER_URL` should point to the reachable Flask server. `ESP32_URL` must
+resolve to the gate controller on the local network. The device key must match
+the server's `DEVICE_API_KEY`; without it, the server rejects detection
+requests and the gate remains closed.
 
-`SERVER_URL` should be the reachable Flask server URL. `ESP32_URL` must resolve
-to the gate controller on the local network. The device key must match the
-server's `DEVICE_API_KEY`; without it, the server rejects detection requests
-and the gate remains closed. Keep this file private and never commit it.
+The ESP32 is compiled separately and cannot read the Pi's `.env`. Copy
+`esp32/smart_gate_esp32/secrets.h.example` to
+`esp32/smart_gate_esp32/secrets.h`, then set its Wi-Fi, `SERVER_URL`, and
+matching `DEVICE_API_KEY` values there. That header is gitignored.
 
 ## Enable the service
 
-The checked-in service assumes the Linux account is `pi`. If your account has a
-different name, edit `User=pi` in the unit before installing it. Then run:
+The checked-in service runs as `gateadmin`. If your Linux account has a
+different name, edit the `User=` and `Group=` settings in the unit before
+installing it. Then run:
 
 ```sh
 sudo cp /opt/smart_gate/anpr/deploy/smart-gate-anpr.service /etc/systemd/system/
@@ -110,3 +114,32 @@ configuration list at the top of `live_capture.py`. Validate plate reads with
 the camera mounted at its final position and lighting. The included OCR
 pipeline is not a guarantee of recognition accuracy for every plate, angle,
 distance, exposure, or night-illumination setup.
+
+## Compare OCR performance on the Pi
+
+Install the Pi requirements after updating the checkout:
+
+```sh
+.venv/bin/pip install -r anpr/requirements-pi.txt
+```
+
+Place representative, non-sensitive plate test images in a directory on the
+Pi. These are test inputs only; the repository's `anpr/test_images/` directory
+is intentionally gitignored. Use the same images and duration for both runs.
+Run the benchmark while the Pi is otherwise idle, with its final cooling and
+camera enclosure in place:
+
+```sh
+cd /opt/smart_gate/anpr
+../.venv/bin/python benchmark_pi_ocr.py --engine both --image-dir ./pi_test_images --duration 300
+```
+
+The script warms up each engine, then processes the image set repeatedly for
+five measured minutes per engine in separate processes. It prints mean and
+median image latency, average CPU percentage normalized across all logical
+cores, peak process RSS memory, and peak CPU temperature sampled from Linux
+thermal sysfs. A missing temperature reading means the OS did not expose a
+thermal-zone value. EasyOCR downloads its model on first use and uses
+significantly more memory; allow internet access and disk space on its first
+run. Keep the Pi plugged into stable power and do not run both engines
+simultaneously during this comparison.

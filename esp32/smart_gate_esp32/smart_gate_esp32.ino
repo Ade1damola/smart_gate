@@ -60,17 +60,9 @@
 // CONFIGURATION - CHANGE THESE TO MATCH YOUR SETUP
 // ============================================================
 
-// WIFI_SSID, WIFI_PASS, DEVICE_API_KEY live in secrets.h (gitignored, never
-// committed). Copy secrets.h.example to secrets.h and fill in your real
-// values before building.
+// Wi-Fi, server URL, and device key live in secrets.h (gitignored, never
+// committed). Copy secrets.h.example to secrets.h and set local values.
 #include "secrets.h"
-
-// Hosted server URL (your Render web service)
-// const char* SERVER_URL = "https://verigate-ry5y.onrender.com";
-
-// Local Flask server on the laptop, for testing. Use the laptop's Wi-Fi
-// IPv4 address (ipconfig) - switch back to the Render URL before deploying.
-const char* SERVER_URL = "http://10.210.252.254:5000";
 
 // DEVICE_API_KEY (from secrets.h) is sent as the X-Device-Key header on
 // every hosted-server call. Must exactly match the DEVICE_API_KEY
@@ -555,6 +547,8 @@ bool fetchOwnerTemplates() {
     HTTPClient http;
     beginServerRequest(http, "/api/device/users/" + pendingStaffId + "/fingerprints?plate=" +
                        pendingPlate + "&event_type=" + pendingEventType, 30000);
+    const char* responseHeaders[] = {"Content-Type"};
+    http.collectHeaders(responseHeaders, 1);
     int httpCode = http.GET();
     if (httpCode != 200) {
         Serial.print("[FP] Could not download templates. HTTP: ");
@@ -563,9 +557,29 @@ bool fetchOwnerTemplates() {
         return false;
     }
 
-    JsonDocument doc;
-    DeserializationError err = deserializeJson(doc, http.getStream());
+    String responseBody = http.getString();
+    String contentType = http.header("Content-Type");
     http.end();
+
+    int firstByteIndex = 0;
+    while (firstByteIndex < responseBody.length() &&
+           (responseBody[firstByteIndex] == ' ' || responseBody[firstByteIndex] == '\t' ||
+            responseBody[firstByteIndex] == '\r' || responseBody[firstByteIndex] == '\n')) {
+        firstByteIndex++;
+    }
+    Serial.print("[FP] Response type=");
+    Serial.print(contentType);
+    Serial.print(" bytes=");
+    Serial.print(responseBody.length());
+    Serial.print(" first-nonspace-byte=");
+    if (firstByteIndex < responseBody.length()) {
+        Serial.println((uint8_t)responseBody[firstByteIndex], HEX);
+    } else {
+        Serial.println("none");
+    }
+
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, responseBody);
     if (err) {
         Serial.print("[FP] Bad template response: ");
         Serial.println(err.c_str());

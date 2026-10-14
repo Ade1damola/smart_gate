@@ -10,12 +10,23 @@ the real gate computer.
 """
 
 import os
+from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
 
-SERVER_URL = os.environ.get("SERVER_URL", "https://verigate-ry5y.onrender.com")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(REPO_ROOT / ".env")
+
+SERVER_URL = os.environ.get("SERVER_URL", "").rstrip("/")
 DEVICE_API_KEY = os.environ.get("DEVICE_API_KEY", "")
-ESP32_URL = os.environ.get("ESP32_URL", "http://verigate.local")
+ESP32_URL = os.environ.get("ESP32_URL", "").rstrip("/")
+
+
+def _server_url():
+    if not SERVER_URL:
+        raise RuntimeError("SERVER_URL is missing; set it in the project .env file.")
+    return SERVER_URL
 
 
 def _device_headers():
@@ -47,7 +58,7 @@ def _lookup_result(response):
 def request_check_plate(plate):
     """GET /check_plate on the hosted server. Returns the parsed JSON dict."""
     response = requests.get(
-        f"{SERVER_URL}/check_plate",
+        f"{_server_url()}/check_plate",
         params={"plate": plate},
         headers=_device_headers(),
         timeout=10,
@@ -63,7 +74,7 @@ def report_detection(plate, jpeg_bytes=None, event_type="entry"):
     """
     files = {"image": ("frame.jpg", jpeg_bytes, "image/jpeg")} if jpeg_bytes else None
     response = requests.post(
-        f"{SERVER_URL}/api/device/detection",
+        f"{_server_url()}/api/device/detection",
         data={"plate": plate, "event_type": event_type},
         files=files,
         headers=_device_headers(),
@@ -78,7 +89,7 @@ def push_camera_frame(jpeg_bytes):
     headers = _device_headers()
     headers["Content-Type"] = "image/jpeg"
     response = requests.post(
-        f"{SERVER_URL}/api/device/camera_frame",
+        f"{_server_url()}/api/device/camera_frame",
         data=jpeg_bytes,
         headers=headers,
         timeout=10,
@@ -94,7 +105,7 @@ def push_camera_frame(jpeg_bytes):
 def verify_fingerprint(staff_id, template_id, plate_number, event_type="entry"):
     """POST /api/verify_fingerprint on the hosted server (manual/no-ESP32 test path)."""
     response = requests.post(
-        f"{SERVER_URL}/api/verify_fingerprint",
+        f"{_server_url()}/api/verify_fingerprint",
         json={
             "staff_id": staff_id,
             "fingerprint_template_id": template_id,
@@ -110,7 +121,7 @@ def verify_fingerprint(staff_id, template_id, plate_number, event_type="entry"):
 def verify_otp(staff_id, otp_code, plate_number, event_type="entry"):
     """POST /api/verify_otp on the hosted server (manual/no-ESP32 test path)."""
     response = requests.post(
-        f"{SERVER_URL}/api/verify_otp",
+        f"{_server_url()}/api/verify_otp",
         json={
             "staff_id": staff_id,
             "otp_code": otp_code,

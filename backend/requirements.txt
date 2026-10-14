@@ -3,3 +3,4 @@ flask-sqlalchemy
 psycopg[binary]
 gunicorn
 requests
+python-dotenv

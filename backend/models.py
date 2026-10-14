@@ -1,8 +1,8 @@
 """SQLAlchemy models for the Smart Gate backend.
 
 Mirrors the shape of the old staff.json / vehicles.json / otps.json /
-password_reset_otps.json / logs.json files, now backed by a real database
-(SQLite locally, Postgres in production) so data survives restarts/redeploys.
+password_reset_otps.json / logs.json files, backed by SQLAlchemy with local
+PostgreSQL configured through DATABASE_URL (SQLite is the fallback).
 """
 
 from flask_sqlalchemy import SQLAlchemy

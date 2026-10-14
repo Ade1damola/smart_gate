@@ -3,6 +3,8 @@ __pycache__/
 .venv/
 venv/
 .env
+.env.*
+!.env.example
 
 # Claude Code local settings (machine-specific, not project config)
 .claude/

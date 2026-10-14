@@ -861,14 +861,21 @@ def admin_create_user():
 
     staff_row = Staff(
         staff_id=fields["staff_id"],
+        name=fields["name"],
         password_hash=generate_password_hash(DEFAULT_STAFF_PASSWORD),
         fingerprint_template_id="",
         created_time=now_iso(),
     )
-    with db.session.no_autoflush:
+    # No relationship() links Staff to its vehicles/templates, so the unit of
+    # work can't order the inserts: flush the staff row before adding children.
+    try:
+        db.session.add(staff_row)
+        db.session.flush()
         apply_user_fields(staff_row, fields)
-    db.session.add(staff_row)
-    db.session.commit()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
 
     return jsonify({
         "success": True,

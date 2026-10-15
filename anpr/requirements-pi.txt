@@ -2,5 +2,3 @@ requests
 python-dotenv
 opencv-python==4.10.0.84
 rapidocr_onnxruntime==1.2.3
-easyocr
-psutil

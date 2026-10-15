@@ -1,0 +1,6 @@
+# Only needed for benchmark_pi_ocr.py, not the live service.
+# Install CPU-only PyTorch first (see RASPBERRY_PI.md); otherwise pip pulls
+# the CUDA build and several GB of NVIDIA libraries the Pi cannot use.
+-r requirements-pi.txt
+psutil
+easyocr

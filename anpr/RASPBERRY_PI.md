@@ -191,39 +191,43 @@ so it isn't guaranteed for every setup.
 
 ---
 
-## Optional: comparing OCR engines
+## Optional: measuring OCR performance
 
-`benchmark_pi_ocr.py` measures how fast each text-recognition engine runs on
-this Pi, and how much CPU, memory and heat it uses.
+`benchmark_pi_ocr.py` runs RapidOCR continuously on test photos and measures
+how the Pi copes.
 
-1. Install the extra benchmark packages. Install PyTorch first, from its
-   CPU-only source. Without that step, pip downloads the GPU build, which is
-   several GB of NVIDIA libraries the Pi can't use.
+1. Install the benchmark package:
 
    ```sh
    cd /opt/smart_gate
-   .venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
    .venv/bin/pip install -r anpr/requirements-pi-benchmark.txt
    ```
 
 2. Put some test plate photos in a folder on the Pi, for example
    `/opt/smart_gate/anpr/pi_test_images`. Don't use photos of real people's
    plates you shouldn't keep, and don't commit them.
-3. Leave the Pi idle, in its final case and cooling, on stable power.
-4. Run:
+3. Stop the live service so it doesn't skew the results, and leave the Pi in
+   its final case and cooling, on stable power:
+
+   ```sh
+   sudo systemctl stop smart-gate-anpr
+   ```
+
+4. Run (takes about 5 minutes):
 
    ```sh
    cd /opt/smart_gate/anpr
-   ../.venv/bin/python benchmark_pi_ocr.py --engine both --image-dir ./pi_test_images --duration 300
+   ../.venv/bin/python benchmark_pi_ocr.py --image-dir ./pi_test_images --duration 300
    ```
 
-This tests each engine for 5 minutes, one after the other, so the full run
-takes a little over 10 minutes. It then prints for each engine:
+5. Start the service again: `sudo systemctl start smart-gate-anpr`
 
-- Average and median time per image
-- Average CPU use (across all cores)
-- Peak memory use
-- Peak CPU temperature (blank if the Pi doesn't report it)
+It prints:
 
-The first EasyOCR run downloads a model, so it needs internet access and some
-free disk space. EasyOCR also uses much more memory than the other engine.
+| Measure | Meaning |
+|---|---|
+| Mean processing time per image (s) | Average time to read one photo |
+| Median processing time per image (s) | Typical time, ignoring occasional slow reads |
+| CPU use during recognition (%) | Average share of the Pi's total CPU (all cores) |
+| Memory use (MB) | Peak memory used by the recognition process |
+| CPU temperature under continuous operation (°C) | Hottest reading during the run ("unavailable" if the Pi doesn't report it) |

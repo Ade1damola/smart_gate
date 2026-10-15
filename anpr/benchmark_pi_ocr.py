@@ -1,4 +1,4 @@
-"""Measure sustained OCR latency and resource use on a Raspberry Pi."""
+"""Measure sustained RapidOCR latency and resource use on a Raspberry Pi."""
 
 import argparse
 import glob
@@ -13,17 +13,9 @@ import psutil
 IMAGE_PATTERNS = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.webp")
 
 
-def _load_engine(name):
-    if name == "easyocr":
-        from anpr_engine_easyocr import run_anpr
-    else:
-        from anpr_engine_rapidocr import run_anpr
-    return run_anpr
-
-
-def _benchmark_worker(name, image_paths, duration_seconds, results):
+def _benchmark_worker(image_paths, duration_seconds, results):
     try:
-        run_anpr = _load_engine(name)
+        from anpr_engine_rapidocr import run_anpr
         run_anpr(image_paths[0])
         results.put(("ready", None))
 
@@ -64,12 +56,12 @@ def _cpu_temperature_c():
     return max(temperatures) if temperatures else None
 
 
-def _run_engine(name, image_paths, duration_seconds):
+def _run_benchmark(image_paths, duration_seconds):
     context = multiprocessing.get_context("spawn")
     results = context.Queue()
     worker = context.Process(
         target=_benchmark_worker,
-        args=(name, image_paths, duration_seconds, results),
+        args=(image_paths, duration_seconds, results),
     )
     worker.start()
 
@@ -78,11 +70,11 @@ def _run_engine(name, image_paths, duration_seconds):
     except Exception:
         worker.terminate()
         worker.join()
-        raise RuntimeError(f"{name} did not finish loading/warming up within 15 minutes")
+        raise RuntimeError(f"RapidOCR did not finish loading/warming up within 15 minutes")
 
     if status == "error":
         worker.join()
-        raise RuntimeError(f"{name} failed during warmup: {value}")
+        raise RuntimeError(f"RapidOCR failed during warmup: {value}")
 
     process = psutil.Process(worker.pid)
     process.cpu_percent()
@@ -102,14 +94,14 @@ def _run_engine(name, image_paths, duration_seconds):
 
     worker.join()
     if worker.exitcode != 0:
-        raise RuntimeError(f"{name} worker exited with code {worker.exitcode}")
+        raise RuntimeError(f"RapidOCR worker exited with code {worker.exitcode}")
 
     try:
         status, value = results.get(timeout=5)
     except Exception as exc:
-        raise RuntimeError(f"{name} worker finished without a summary") from exc
+        raise RuntimeError(f"RapidOCR worker finished without a summary") from exc
     if status != "done":
-        raise RuntimeError(f"{name} failed: {value}")
+        raise RuntimeError(f"RapidOCR failed: {value}")
 
     cpu_count = psutil.cpu_count(logical=True) or 1
     value.update({
@@ -123,9 +115,8 @@ def _run_engine(name, image_paths, duration_seconds):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--engine", choices=("rapidocr", "easyocr", "both"), default="both")
     parser.add_argument("--image-dir", default="test_images", help="Directory of representative plate images")
-    parser.add_argument("--duration", type=int, default=300, help="Measured seconds per engine after warmup")
+    parser.add_argument("--duration", type=int, default=300, help="Measured seconds after warmup")
     args = parser.parse_args()
 
     image_paths = sorted({
@@ -138,22 +129,16 @@ def main():
     if args.duration < 1:
         parser.error("--duration must be at least 1 second")
 
-    engines = ("rapidocr", "easyocr") if args.engine == "both" else (args.engine,)
-    print(f"Images: {len(image_paths)}; measured duration per engine: {args.duration}s")
-    print("CPU percentage is normalized to total logical CPU capacity.")
-    for name in engines:
-        print(f"\n{name}: loading model and warming up...")
-        result = _run_engine(name, image_paths, args.duration)
-        print(f"  Images processed: {result['images_processed']}")
-        print(f"  Plates recognized: {result['plates_recognized']}")
-        print(f"  Mean processing time per image: {result['mean_seconds']:.3f} s")
-        print(f"  Median processing time per image: {result['median_seconds']:.3f} s")
-        print(f"  Average CPU during recognition: {result['cpu_percent']:.1f}%")
-        print(f"  Peak process memory: {result['peak_memory_mb']:.1f} MB")
-        if result["peak_cpu_temperature_c"] is None:
-            print("  Peak CPU temperature: unavailable (thermal sysfs not exposed)")
-        else:
-            print(f"  Peak CPU temperature: {result['peak_cpu_temperature_c']:.1f} C")
+    print(f"RapidOCR on {len(image_paths)} images for {args.duration}s (after warmup)...")
+    result = _run_benchmark(image_paths, args.duration)
+    temperature = result["peak_cpu_temperature_c"]
+    print(f"\nImages processed: {result['images_processed']}\n")
+    print(f"Mean processing time per image (s): {result['mean_seconds']:.3f}")
+    print(f"Median processing time per image (s): {result['median_seconds']:.3f}")
+    print(f"CPU use during recognition (%): {result['cpu_percent']:.1f}")
+    print(f"Memory use (MB): {result['peak_memory_mb']:.1f}")
+    print("CPU temperature under continuous operation (°C): "
+          + (f"{temperature:.1f}" if temperature is not None else "unavailable"))
 
 
 if __name__ == "__main__":

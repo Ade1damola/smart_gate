@@ -441,19 +441,78 @@ def send_reset_email(email, name, reset_url):
 </body>
 </html>"""
 
+    deliver_email(email, "Reset your Verigate password", html_body, text_body,
+                  f"Password reset link: {reset_url}")
+
+
+def send_welcome_email(email, name, staff_id, login_url, forgot_url):
+    """Welcome a newly registered user. The temporary password is deliberately
+    not emailed; the user sets their own through the reset-link flow."""
+    text_body = (
+        f"Hi {name},\n\n"
+        "Welcome to Verigate, the smart gate access system. Your vehicle is now registered, "
+        "and the gate verifies you by plate number, fingerprint and one-time passwords.\n\n"
+        f"Your ID number for logging in is: {staff_id}\n\n"
+        f"Before your first login, set your password here (use this email address):\n{forgot_url}\n\n"
+        f"Then log in at:\n{login_url}\n\n"
+        "From your dashboard you can generate one-time passwords for anyone driving your car "
+        "and review your gate activity.\n\n"
+        "Need help? Reply to this email or contact the security office.\n\n"
+        "Verigate Smart Gate Access System"
+    )
+    safe_name = html.escape(name)
+    safe_id = html.escape(staff_id)
+    safe_login = html.escape(login_url, quote=True)
+    safe_forgot = html.escape(forgot_url, quote=True)
+    html_body = f"""<!DOCTYPE html>
+<html>
+<head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#1f2933;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:8px;overflow:hidden;">
+        <tr><td style="background:#1d4ed8;padding:20px 32px;">
+          <span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:0.5px;">Verigate</span>
+        </td></tr>
+        <tr><td style="padding:32px;">
+          <h1 style="margin:0 0 16px;font-size:20px;">Welcome, {safe_name}!</h1>
+          <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">Your vehicle is now registered with Verigate, the smart gate access system. The gate verifies you by plate number, fingerprint and one-time passwords.</p>
+          <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">Your ID number for logging in is <strong>{safe_id}</strong>.</p>
+          <p style="margin:0 0 24px;font-size:15px;line-height:1.5;">Before your first login, <a href="{safe_forgot}" style="color:#1d4ed8;">set your password</a> using this email address.</p>
+          <p style="margin:0 0 24px;text-align:center;">
+            <a href="{safe_login}" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:bold;font-size:15px;padding:12px 28px;border-radius:6px;">Go to Login</a>
+          </p>
+          <p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#52606d;">If the button doesn't work, copy this link into your browser:</p>
+          <p style="margin:0 0 24px;font-size:13px;line-height:1.5;word-break:break-all;"><a href="{safe_login}" style="color:#1d4ed8;">{safe_login}</a></p>
+          <p style="margin:0;font-size:14px;line-height:1.5;">From your dashboard you can generate one-time passwords for anyone driving your car and review your gate activity.</p>
+        </td></tr>
+        <tr><td style="padding:20px 32px;border-top:1px solid #e4e7eb;font-size:12px;line-height:1.5;color:#7b8794;">
+          Need help? Reply to this email or contact the security office.<br>Verigate Smart Gate Access System
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+    deliver_email(email, "Welcome to Verigate!", html_body, text_body, f"Welcome email, login at {login_url}")
+
+
+def deliver_email(email, subject, html_body, text_body, simulated_summary):
+    """Send through Resend, or print a summary when no key is configured.
+    Never raises: callers run this after the real work has been committed."""
     if not RESEND_API_KEY:
-        print(f"[SIMULATED EMAIL to {email}] Password reset link: {reset_url}")
+        print(f"[SIMULATED EMAIL to {email}] {simulated_summary}")
         return
     try:
         resend.Emails.send({
             "from": SENDER_EMAIL,
             "to": [email],
-            "subject": "Reset your Verigate password",
+            "subject": subject,
             "html": html_body,
             "text": text_body,
         })
     except Exception as exc:
-        app.logger.warning("Resend reset email to %s failed: %s", email, exc)
+        app.logger.warning("Resend email %r to %s failed: %s", subject, email, exc)
 
 
 def send_otp_email(staff, code, expiry):
@@ -911,6 +970,16 @@ def admin_create_user():
     except Exception:
         db.session.rollback()
         raise
+
+    # Sent in the background after the commit, so a slow or failing email
+    # can't delay or undo the registration.
+    base_url = PUBLIC_BASE_URL or request.host_url.rstrip("/")
+    threading.Thread(
+        target=send_welcome_email,
+        args=(staff_row.email, staff_row.name, staff_row.staff_id,
+              f"{base_url}/login.html", f"{base_url}/forgot-password.html"),
+        daemon=True,
+    ).start()
 
     return jsonify({
         "success": True,

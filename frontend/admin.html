@@ -177,7 +177,7 @@
 
             <div class="panel form-section">
               <h2>2. Contact</h2>
-              <p class="muted">OTPs and password reset codes are sent here.</p>
+              <p class="muted">OTPs and password reset links are sent to this email.</p>
               <div class="form-grid">
                 <div>
                   <label for="f-email">Email address</label>
@@ -341,7 +341,7 @@
               <li>The server runs on port 5000 and is reachable from other devices on your Wi-Fi (it listens on all addresses).</li>
               <li>Admin portal: <a href="http://localhost:5000/admin">http://localhost:5000/admin</a> &middot; Staff portal: <a href="http://localhost:5000/">http://localhost:5000/</a></li>
               <li>Find your laptop's Wi-Fi address with <code>ipconfig</code> (the <em>IPv4 Address</em>, e.g. <code>192.168.1.50</code>). The ESP32 needs it.</li>
-              <li>Emails and SMS aren't really sent locally &mdash; OTP emails and password-reset codes are <strong>printed in this server window</strong> instead.</li>
+              <li>Emails aren't really sent locally &mdash; OTP emails and password-reset links are <strong>printed in this server window</strong> instead.</li>
             </ul>
             <p class="doc-note"><strong>Device key:</strong> use the same <code>DEVICE_API_KEY</code> in the server environment, project-root <code>.env</code>, and ESP32's ignored <code>secrets.h</code>. A mismatch shows as <em>"Invalid or missing device key"</em> and the gate stays shut.</p>
             <p class="doc-note"><strong>Windows Firewall:</strong> the first time, Windows may ask whether Python can accept connections &mdash; allow it on <em>private networks</em>, or the ESP32 won't reach the server.</p>
@@ -452,7 +452,7 @@
               <li>Open the <a href="/" target="_blank" rel="noopener">staff portal</a> in a <strong>different browser or private window</strong> (staff and admin logins are separate).</li>
               <li>Log in with the user's <strong>ID number</strong> and the temporary password configured by <code>DEFAULT_STAFF_PASSWORD</code> in the local <code>.env</code> file.</li>
               <li>Generate an OTP. Locally the email isn't sent &mdash; the code is on screen and also printed in the server window.</li>
-              <li>Try <em>Forgot password?</em>: the reset code is printed in the server window locally.</li>
+              <li>Try <em>Forgot password?</em> with the user's email: the reset link is printed in the server window locally.</li>
               <li>Confirm admin login details are rejected on the staff login, and vice versa.</li>
             </ol>
           </article>

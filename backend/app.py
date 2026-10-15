@@ -6,6 +6,8 @@ configured, so the same codebase can still start in a minimal dev environment.
 """
 
 import base64
+import hashlib
+import html
 import binascii
 import json
 import os
@@ -21,13 +23,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
+import resend
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 from models import (
-    db, Staff, Admin, Vehicle, FingerprintTemplate, Otp, PasswordResetOtp, Log, GateEvent,
+    db, Staff, Admin, Vehicle, FingerprintTemplate, Otp, PasswordResetOtp, PasswordResetToken, Log, GateEvent,
     USER_CATEGORIES,
 )
 
@@ -56,15 +59,19 @@ for prefix in ("postgres://", "postgresql://"):
 # doesn't require configuring a key; must be set once this is hosted publicly.
 DEVICE_API_KEY = os.environ.get("DEVICE_API_KEY", "")
 
-# Termii credentials for real SMS delivery. When unset (local dev), the
-# reset code is printed to the console instead of actually being texted.
-TERMII_API_KEY = os.environ.get("TERMII_API_KEY", "")
-TERMII_SENDER_ID = os.environ.get("TERMII_SENDER_ID", "")
+# Resend credentials for email delivery. When the key is unset (local dev),
+# emails are printed to the console instead of actually being sent.
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+resend.api_key = RESEND_API_KEY
 RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "")
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL") or "Verigate <noreply@send.verigate.site>"
+
+# Base URL put in emailed reset links. Taken from config rather than the
+# request's Host header, which a caller controls (reset-link poisoning).
+PUBLIC_BASE_URL = (os.environ.get("PUBLIC_BASE_URL") or os.environ.get("SERVER_URL") or "").rstrip("/")
 
 # Default password assigned to every newly-added staff member. They're
-# expected to use the "forgot password" OTP flow to set their own password.
+# expected to use the "forgot password" email flow to set their own password.
 # Real value set via the DEFAULT_STAFF_PASSWORD env var on the server; this
 # fallback is only for local dev and is not a real credential.
 DEFAULT_STAFF_PASSWORD = os.environ.get("DEFAULT_STAFF_PASSWORD", "")
@@ -82,8 +89,8 @@ if not DEFAULT_STAFF_PASSWORD or not DEFAULT_ADMIN_PASSWORD:
         "or deployment environment before starting the backend."
     )
 
-# How long a password-reset OTP stays valid.
-RESET_OTP_VALID_MINUTES = 10
+# How long an emailed password-reset link stays valid.
+RESET_TOKEN_VALID_MINUTES = 15
 
 # Detection snapshots are kept for only the most recent N detections so the
 # database (Render's free Postgres is 1 GB) doesn't fill up with images; the
@@ -392,34 +399,61 @@ def image_response(data, image_type):
 # SMS delivery (password-reset OTPs)
 # ---------------------------------------------------------------------------
 
-def send_reset_sms(phone_number, code):
-    message = (
-        "Your Smart Gate password reset code is {code}. "
-        "It expires in {minutes} minutes.".format(code=code, minutes=RESET_OTP_VALID_MINUTES)
+def hash_reset_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def send_reset_email(email, name, reset_url):
+    """Email a password-reset link through Resend. Failures are logged, never
+    raised: the caller always returns the same generic response."""
+    minutes = RESET_TOKEN_VALID_MINUTES
+    text_body = (
+        f"Hi {name},\n\n"
+        "We received a request to reset your Verigate password. "
+        f"Open this link to choose a new one (it expires in {minutes} minutes):\n\n"
+        f"{reset_url}\n\n"
+        "If you didn't ask for this, you can ignore this email - your password won't change.\n\n"
+        "Verigate Smart Gate Access System"
     )
+    safe_name = html.escape(name)
+    safe_url = html.escape(reset_url, quote=True)
+    html_body = f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#1f2933;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:8px;padding:32px;">
+        <tr><td>
+          <h1 style="margin:0 0 16px;font-size:20px;">Reset your password</h1>
+          <p style="margin:0 0 16px;font-size:15px;line-height:1.5;">Hi {safe_name},</p>
+          <p style="margin:0 0 24px;font-size:15px;line-height:1.5;">We received a request to reset your Verigate password. This link expires in {minutes} minutes.</p>
+          <p style="margin:0 0 24px;text-align:center;">
+            <a href="{safe_url}" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:bold;font-size:15px;padding:12px 28px;border-radius:6px;">Reset Password</a>
+          </p>
+          <p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#52606d;">If the button doesn't work, copy this link into your browser:</p>
+          <p style="margin:0 0 24px;font-size:13px;line-height:1.5;word-break:break-all;"><a href="{safe_url}" style="color:#1d4ed8;">{safe_url}</a></p>
+          <p style="margin:0;font-size:13px;line-height:1.5;color:#52606d;">If you didn't ask for this, you can ignore this email &mdash; your password won't change.</p>
+        </td></tr>
+      </table>
+      <p style="margin:16px 0 0;font-size:12px;color:#7b8794;">Verigate Smart Gate Access System</p>
+    </td></tr>
+  </table>
+</body>
+</html>"""
 
-    if not TERMII_API_KEY:
-        # No SMS gateway configured (local dev) - simulate delivery.
-        print("[SIMULATED SMS to {phone}] {message}".format(phone=phone_number, message=message))
+    if not RESEND_API_KEY:
+        print(f"[SIMULATED EMAIL to {email}] Password reset link: {reset_url}")
         return
-
     try:
-        requests.post(
-            "https://api.ns.termii.com/api/sms/send",
-            json={
-                "to": phone_number,
-                "from": TERMII_SENDER_ID,
-                "sms": message,
-                "type": "plain",
-                "channel": "generic",
-                "api_key": TERMII_API_KEY,
-            },
-            timeout=10,
-        )
-    except requests.RequestException as exc:
-        # Don't fail the whole request just because the SMS gateway is down -
-        # the OTP is still valid and recoverable (e.g. staff calls the admin).
-        print("[SMS ERROR] Could not send reset code to {phone}: {exc}".format(phone=phone_number, exc=exc))
+        resend.Emails.send({
+            "from": SENDER_EMAIL,
+            "to": [email],
+            "subject": "Reset your Verigate password",
+            "html": html_body,
+            "text": text_body,
+        })
+    except Exception as exc:
+        app.logger.warning("Resend reset email to %s failed: %s", email, exc)
 
 
 def send_otp_email(staff, code, expiry):
@@ -603,80 +637,81 @@ def logout_route():
 
 
 # ---------------------------------------------------------------------------
-# Route 1a: forgot password - request a reset OTP sent to the staff member's
-# registered phone number. No login required (that's the whole point).
+# Route 1a: forgot password - email a single-use reset link to the address
+# on file. No login required (that's the whole point).
 # ---------------------------------------------------------------------------
 
-GENERIC_RESET_REQUEST_MESSAGE = "If that staff ID exists, a reset code has been sent to the registered phone number."
+GENERIC_RESET_REQUEST_MESSAGE = "If an account exists with that email, a reset link has been sent."
 
 
 @app.route("/api/request_password_reset", methods=["POST"])
 def request_password_reset():
     data = request.get_json(silent=True) or {}
-    staff_id = (data.get("staff_id") or "").strip()
+    email = (data.get("email") or "").strip()
 
-    staff_row = db.session.get(Staff, staff_id) if staff_id else None
-    if staff_row:
+    outgoing = []
+    if EMAIL_PATTERN.match(email):
+        base_url = PUBLIC_BASE_URL or request.host_url.rstrip("/")
         created = now_wat()
-        expiry = created + timedelta(minutes=RESET_OTP_VALID_MINUTES)
-        code = "".join(random.choices(string.digits, k=6))
-
-        db.session.add(PasswordResetOtp(
-            otp_code=code,
-            staff_id=staff_row.staff_id,
-            created_time=created.isoformat(timespec="seconds"),
-            expiry_time=expiry.isoformat(timespec="seconds"),
-            used=False,
-        ))
+        expiry = created + timedelta(minutes=RESET_TOKEN_VALID_MINUTES)
+        # Emails aren't unique, so every account sharing the address gets its
+        # own link.
+        matches = Staff.query.filter(db.func.lower(Staff.email) == email.lower()).all()
+        for staff_row in matches:
+            token = secrets.token_urlsafe(32)
+            db.session.add(PasswordResetToken(
+                token_hash=hash_reset_token(token),
+                staff_id=staff_row.staff_id,
+                created_time=created.isoformat(timespec="seconds"),
+                expiry_time=expiry.isoformat(timespec="seconds"),
+                used=False,
+            ))
+            outgoing.append((staff_row.email, staff_row.name, f"{base_url}/reset-password.html?token={token}"))
         db.session.commit()
 
-        send_reset_sms(staff_row.phone_number, code)
+    # Send in the background so the response time doesn't reveal whether the
+    # address matched an account.
+    for args in outgoing:
+        threading.Thread(target=send_reset_email, args=args, daemon=True).start()
 
-    # Always return the same generic response, whether or not staff_id
-    # matched, so this endpoint can't be used to find out which staff IDs
-    # are real.
+    # Always the same response, matched or not, so this endpoint can't be
+    # used to find out which emails are registered.
     return jsonify({"success": True, "message": GENERIC_RESET_REQUEST_MESSAGE})
 
 
 # ---------------------------------------------------------------------------
-# Route 1b: forgot password - complete the reset with the OTP just received.
+# Route 1b: forgot password - set a new password using the emailed token.
 # ---------------------------------------------------------------------------
 
 @app.route("/api/reset_password", methods=["POST"])
 def reset_password():
     data = request.get_json(silent=True) or {}
-    staff_id = (data.get("staff_id") or "").strip()
-    code = (data.get("otp_code") or "").strip()
+    token = (data.get("token") or "").strip()
     new_password = data.get("new_password") or ""
 
-    if not staff_id or not code or not new_password:
-        return jsonify({"success": False, "message": "staff_id, otp_code and new_password are required"}), 400
+    if not token or not new_password:
+        return jsonify({"success": False, "message": "token and new_password are required"}), 400
 
     if len(new_password) < 6:
         return jsonify({"success": False, "message": "new_password must be at least 6 characters"}), 400
 
-    staff_row = db.session.get(Staff, staff_id)
+    matched = PasswordResetToken.query.filter_by(token_hash=hash_reset_token(token)).first()
+    if matched is None or matched.used or parse_time(matched.expiry_time) <= now_wat():
+        return jsonify({"success": False, "message": "This reset link is invalid or has expired."}), 400
+
+    staff_row = db.session.get(Staff, matched.staff_id)
     if not staff_row:
-        return jsonify({"success": False, "message": "Invalid or expired reset code"}), 400
+        return jsonify({"success": False, "message": "This reset link is invalid or has expired."}), 400
 
-    now = now_wat()
-    matched = (
-        PasswordResetOtp.query
-        .filter_by(otp_code=code, staff_id=staff_id)
-        .order_by(PasswordResetOtp.id.desc())
-        .first()
-    )
-
-    if (
-        matched is None
-        or matched.used
-        or parse_time(matched.expiry_time) <= now
-    ):
-        return jsonify({"success": False, "message": "Invalid or expired reset code"}), 400
-
-    matched.used = True
+    # Burn every outstanding link for this account, not just the one used.
+    PasswordResetToken.query.filter_by(staff_id=staff_row.staff_id, used=False).update({"used": True})
     staff_row.password_hash = generate_password_hash(new_password)
     db.session.commit()
+
+    # Sign out sessions opened with the old password.
+    for session_token, session in list(sessions.items()):
+        if session["role"] == "staff" and session["id"] == staff_row.staff_id:
+            sessions.pop(session_token, None)
 
     return jsonify({"success": True, "message": "Password reset successfully. You can now log in."})
 
@@ -938,7 +973,7 @@ def admin_delete_user(staff_id):
 
     # Access logs are kept as an audit trail; everything that grants access
     # (vehicles, fingerprints, OTPs) goes with the user.
-    for model in (Vehicle, FingerprintTemplate, Otp, PasswordResetOtp):
+    for model in (Vehicle, FingerprintTemplate, Otp, PasswordResetOtp, PasswordResetToken):
         model.query.filter_by(staff_id=staff_id).delete()
     db.session.delete(staff_row)
     db.session.commit()

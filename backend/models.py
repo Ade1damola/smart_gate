@@ -178,6 +178,20 @@ class PasswordResetOtp(db.Model):
     used = db.Column(db.Boolean, nullable=False, default=False)
 
 
+class PasswordResetToken(db.Model):
+    """A single-use emailed reset link. Only the SHA-256 of the token is
+    stored, so a database leak doesn't hand out working reset links."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    token_hash = db.Column(db.String(64), nullable=False, unique=True)
+    staff_id = db.Column(db.String(32), db.ForeignKey("staff.staff_id"), nullable=False)
+    created_time = db.Column(db.String(32), nullable=False)
+    expiry_time = db.Column(db.String(32), nullable=False)
+    used = db.Column(db.Boolean, nullable=False, default=False)
+
+
 class Log(db.Model):
     __tablename__ = "logs"
 

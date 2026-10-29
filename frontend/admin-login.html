@@ -24,7 +24,10 @@
       <input type="text" id="admin_id" autocomplete="username" required />
 
       <label for="password">Password</label>
-      <input type="password" id="password" autocomplete="current-password" required />
+      <div class="password-field">
+        <input type="password" id="password" autocomplete="current-password" required />
+        <button type="button" class="password-toggle" data-password-toggle aria-controls="password" aria-label="Show password" aria-pressed="false">Show</button>
+      </div>
 
       <p id="login-error" class="form-error" hidden></p>
 
@@ -33,6 +36,7 @@
   </main>
 
   <script src="js/api.js"></script>
+  <script src="js/password-toggle.js"></script>
   <script>
     (function () {
       if (getToken()) {
